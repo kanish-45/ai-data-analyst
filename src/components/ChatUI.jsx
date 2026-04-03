@@ -9,7 +9,7 @@ import {
 import { useData, buildDatasetContext } from '../context/DataContext'
 
 // ─── Ollama config ─────────────────────────────────────────────────────────────
-const OLLAMA_URL    = 'http://localhost:11434/api/chat'
+const OLLAMA_URL = 'http://localhost:11434/api/chat'
 const DEFAULT_MODEL = 'llama3.2'
 
 const AVAILABLE_MODELS = [

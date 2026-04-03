@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useCallback } from 'react'
 const AuthContext = createContext(null)
 
 // ── API base URL ──────────────────────────────────────────────────────────────
-const API = 'http://localhost:3001/api'
+const API = 'https://ai-data-analyst-backend-xj17.onrender.com/api'
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 function getToken()        { return localStorage.getItem('datamind_token') }
