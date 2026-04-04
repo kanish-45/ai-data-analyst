@@ -5,13 +5,14 @@ const mongoose = require('mongoose');
 const cors     = require('cors');
 
 const authRoutes = require('./routes/auth');
+const chatRoutes = require('./routes/chat');   // ← NEW
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin:      process.env.CLIENT_URL || 'http://localhost:5173',
   credentials: true,
 }));
 
@@ -20,14 +21,15 @@ app.use(express.urlencoded({ extended: true }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/api/chat', chatRoutes);             // ← NEW
 
 // Health check route
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'ok',
-    message: 'DataMind API is running',
+    status:   'ok',
+    message:  'DataMind API is running',
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    time: new Date().toISOString(),
+    time:     new Date().toISOString(),
   });
 });
 
@@ -51,9 +53,9 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log('✅ MongoDB connected successfully');
-
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`💬 Chat API: http://localhost:${PORT}/api/chat/sessions`);
     });
   })
   .catch((err) => {
