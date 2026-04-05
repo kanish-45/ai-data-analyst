@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext'
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 const OLLAMA_URL    = 'http://localhost:11434/api/chat'
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+const API_URL = 'https://ai-data-analyst-backend-xj17.onrender.com/api'
 const DEFAULT_MODEL = 'llama3.2'
 
 const AVAILABLE_MODELS = [
