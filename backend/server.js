@@ -6,7 +6,7 @@ const cors     = require('cors');
 
 const authRoutes    = require('./routes/auth');
 const chatRoutes    = require('./routes/chat');
-const datasetRoutes = require('./routes/datasets');  // ← NEW
+const datasetRoutes = require('./routes/datasets');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -15,6 +15,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors({
   origin: [
     'http://localhost:5173',
+    'https://ai-data-analyst-neb97rq6a.vercel.app',  // ← ADD THIS
     process.env.CLIENT_URL,
   ].filter(Boolean),
   credentials: true,
@@ -26,7 +27,7 @@ app.use(express.urlencoded({ extended: true }));
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth',     authRoutes);
 app.use('/api/chat',     chatRoutes);
-app.use('/api/datasets', datasetRoutes);   // ← NEW
+app.use('/api/datasets', datasetRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
