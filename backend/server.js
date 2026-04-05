@@ -15,7 +15,8 @@ const PORT = process.env.PORT || 3001;
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://ai-data-analyst-neb97rq6a.vercel.app',  // ← ADD THIS
+    'https://ai-data-analyst-neb97rq6a.vercel.app',
+    'https://ai-data-analyst-fd3vp4nk9.vercel.app',  
     process.env.CLIENT_URL,
   ].filter(Boolean),
   credentials: true,
