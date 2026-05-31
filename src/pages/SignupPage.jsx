@@ -5,6 +5,7 @@ import {
   AlertCircle, ArrowRight, CheckCircle2
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import SocialAuthButtons from '../components/SocialAuthButtons'
 
 const strengthLevels = [
   { label: 'Too short', color: 'bg-rose-500'    },
@@ -90,9 +91,20 @@ export default function SignupPage() {
 
         {/* Card */}
         <div className="glass-card rounded-3xl border border-white/8 p-8 shadow-2xl shadow-black/40">
-          <div className="mb-7">
+          <div className="mb-6">
             <h1 className="text-2xl font-extrabold text-white mb-1">Create your account</h1>
             <p className="text-gray-400 text-sm">Start analyzing your data for free</p>
+          </div>
+
+          {/* Social sign-up buttons */}
+          <div className="mb-5">
+            <SocialAuthButtons label="Sign up with" />
+          </div>
+
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex-1 h-px bg-white/8" />
+            <span className="text-xs text-gray-600">or sign up with email</span>
+            <div className="flex-1 h-px bg-white/8" />
           </div>
 
           {error && (

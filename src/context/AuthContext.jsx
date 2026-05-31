@@ -42,7 +42,6 @@ async function apiCall(endpoint, options = {}) {
 
 // ── Auth Provider ─────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
-  // Initialize from localStorage so the user stays logged in on refresh
   const [user, setUser] = useState(() => getStoredUser())
 
   // ── Signup ──────────────────────────────────────────────────────────────────
@@ -51,7 +50,6 @@ export function AuthProvider({ children }) {
       method: 'POST',
       body:   JSON.stringify({ name, nickname, email, password }),
     })
-
     saveToken(data.token)
     saveUser(data.user)
     setUser(data.user)
@@ -64,7 +62,6 @@ export function AuthProvider({ children }) {
       method: 'POST',
       body:   JSON.stringify({ email, password }),
     })
-
     saveToken(data.token)
     saveUser(data.user)
     setUser(data.user)
@@ -78,8 +75,14 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
+  // ── Set session from external source (used by OAuth callback) ───────────────
+  const setSession = useCallback((token, userObj) => {
+    saveToken(token)
+    saveUser(userObj)
+    setUser(userObj)
+  }, [])
+
   // ── Refresh user from server ────────────────────────────────────────────────
-  // Call this if you need the latest user data from the DB
   const refreshUser = useCallback(async () => {
     try {
       const data = await apiCall('/auth/me')
@@ -87,7 +90,6 @@ export function AuthProvider({ children }) {
       setUser(data.user)
       return data.user
     } catch {
-      // Token expired or invalid — log out
       clearToken()
       clearUser()
       setUser(null)
@@ -96,7 +98,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, login, signup, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, setSession, refreshUser }}>
       {children}
     </AuthContext.Provider>
   )

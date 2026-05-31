@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Brain, Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import SocialAuthButtons from '../components/SocialAuthButtons'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -60,11 +61,16 @@ export default function LoginPage() {
 
           {/* Demo banner */}
           <button type="button" onClick={fillDemo}
-            className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/8 border border-cyan-500/20 text-cyan-400 text-sm mb-5 hover:bg-cyan-500/15 transition-all">
+            className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/8 border border-cyan-500/20 text-cyan-400 text-sm mb-4 hover:bg-cyan-500/15 transition-all">
             <Sparkles size={14} />
             <span>Use demo account</span>
             <span className="ml-auto text-xs text-gray-500">demo@datamind.ai</span>
           </button>
+
+          {/* Social sign-in buttons */}
+          <div className="mb-5">
+            <SocialAuthButtons label="Continue with" />
+          </div>
 
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-1 h-px bg-white/8" />

@@ -1,10 +1,11 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/AuthContext'
-import LandingPage from './pages/LandingPage'
-import LoginPage   from './pages/LoginPage'
-import SignupPage  from './pages/SignupPage'
-import Dashboard   from './pages/Dashboard'
+import LandingPage   from './pages/LandingPage'
+import LoginPage     from './pages/LoginPage'
+import SignupPage    from './pages/SignupPage'
+import Dashboard     from './pages/Dashboard'
+import OAuthCallback from './pages/OAuthCallback'
 
 // If already logged in, go to landing page (not dashboard)
 function GuestRoute({ children }) {
@@ -36,6 +37,10 @@ function App() {
         <Route path="/dashboard" element={
           <ProtectedRoute><Dashboard /></ProtectedRoute>
         } />
+
+        {/* OAuth: deliberately NOT inside GuestRoute — it has to run even when
+            the user state is briefly empty so it can store the token. */}
+        <Route path="/oauth/callback" element={<OAuthCallback />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

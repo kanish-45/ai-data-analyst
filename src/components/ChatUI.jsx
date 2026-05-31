@@ -11,7 +11,7 @@ import { useData, buildDatasetContext } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
 
 // ─── Config ────────────────────────────────────────────────────────────────────
-const OLLAMA_URL    = 'http://localhost:11434/api/chat'
+const COMPLETION_URL = `${import.meta.env.VITE_API_URL || 'https://ai-data-analyst-backend-xj17.onrender.com/api'}/chat/completion`
 const API_URL = 'https://ai-data-analyst-backend-xj17.onrender.com/api'
 const DEFAULT_MODEL = 'llama3.2'
 
@@ -74,41 +74,77 @@ async function apiCall(endpoint, options = {}) {
 }
 
 // ─── Ollama streamer ───────────────────────────────────────────────────────────
+// ─── AI completion streamer (calls our backend, which calls Groq) ──────────────
 async function streamOllama(history, model, systemPrompt, onToken) {
-  const res = await fetch(OLLAMA_URL, {
+  const token = localStorage.getItem('datamind_token')
+ 
+  const res = await fetch(COMPLETION_URL, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': token ? `Bearer ${token}` : '',
+    },
     body: JSON.stringify({
       model,
-      stream:   true,
-      messages: [{ role: 'system', content: systemPrompt }, ...history],
+      systemPrompt,
+      messages: history,
     }),
   })
-
+ 
   if (!res.ok) {
-    const txt = await res.text().catch(() => '')
-    if (res.status === 404)
-      throw new Error(`Model "${model}" not found. Run: ollama pull ${model}`)
-    throw new Error(`Ollama error ${res.status}: ${txt}`)
+    let msg = `AI service error ${res.status}`
+    try {
+      const data = await res.json()
+      msg = data.message || msg
+    } catch { /* not JSON */ }
+    if (res.status === 401) throw new Error('Please sign in again — your session expired.')
+    throw new Error(msg)
   }
-
+ 
   const reader  = res.body.getReader()
   const decoder = new TextDecoder()
+  let   buffer  = ''
   let   full    = ''
-
+ 
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-    const lines = decoder.decode(value, { stream: true }).split('\n').filter(Boolean)
-    for (const line of lines) {
+ 
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split('\n\n')
+    buffer = events.pop() // keep the (possibly partial) last event
+ 
+    for (const evt of events) {
+      // Each event is one or more lines like "event: x" and "data: {...}"
+      let eventName = 'message'
+      let dataLine  = ''
+      for (const line of evt.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        else if (line.startsWith('data:'))  dataLine  = line.slice(5).trim()
+      }
+      if (!dataLine) continue
+ 
+      if (eventName === 'error') {
+        try {
+          const { message } = JSON.parse(dataLine)
+          throw new Error(message || 'AI request failed.')
+        } catch (e) {
+          throw e instanceof Error ? e : new Error('AI request failed.')
+        }
+      }
+      if (eventName === 'done') return full
+ 
       try {
-        const token = JSON.parse(line)?.message?.content ?? ''
-        if (token) { full += token; onToken(full) }
-      } catch { /* skip */ }
+        const { token: chunk } = JSON.parse(dataLine)
+        if (chunk) { full += chunk; onToken(full) }
+      } catch {
+        /* malformed chunk — skip */
+      }
     }
   }
   return full
 }
+
 
 // ─── Markdown renderer ─────────────────────────────────────────────────────────
 function MessageText({ text }) {

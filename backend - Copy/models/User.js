@@ -4,15 +4,15 @@ const bcrypt   = require('bcryptjs')
 const UserSchema = new mongoose.Schema(
   {
     name: {
-      type:      String,
-      required:  [true, 'Name is required'],
-      trim:      true,
+      type:     String,
+      required: [true, 'Name is required'],
+      trim:     true,
       maxlength: [60, 'Name cannot exceed 60 characters'],
     },
     nickname: {
-      type:      String,
-      required:  [true, 'Nickname is required'],
-      trim:      true,
+      type:     String,
+      required: [true, 'Nickname is required'],
+      trim:     true,
       maxlength: [30, 'Nickname cannot exceed 30 characters'],
     },
     email: {
@@ -23,20 +23,12 @@ const UserSchema = new mongoose.Schema(
       trim:      true,
       match:     [/^\S+@\S+\.\S+$/, 'Please enter a valid email'],
     },
-
-    // Password is required ONLY for local (email/password) accounts.
-    // Social logins (Google/GitHub) sign in without one.
     password: {
       type:      String,
-      required:  [function () { return !this.googleId && !this.githubId }, 'Password is required'],
+      required:  [true, 'Password is required'],
       minlength: [8, 'Password must be at least 8 characters'],
       select:    false, // never return password in queries
     },
-
-    // OAuth provider IDs — set only when a user signs in via that provider
-    googleId: { type: String, default: null },
-    githubId: { type: String, default: null },
-
     plan: {
       type:    String,
       enum:    ['Free', 'Pro', 'Enterprise'],
@@ -54,8 +46,8 @@ const UserSchema = new mongoose.Schema(
 
 // ── Hash password before saving ───────────────────────────────────────────────
 UserSchema.pre('save', async function (next) {
-  // Skip if there's no password (OAuth user) or it wasn't changed
-  if (!this.password || !this.isModified('password')) return next()
+  // Only hash if password was modified
+  if (!this.isModified('password')) return next()
   const salt    = await bcrypt.genSalt(12)
   this.password = await bcrypt.hash(this.password, salt)
   next()
@@ -63,7 +55,6 @@ UserSchema.pre('save', async function (next) {
 
 // ── Compare password method ───────────────────────────────────────────────────
 UserSchema.methods.comparePassword = async function (candidatePassword) {
-  if (!this.password) return false // OAuth-only account has no password to match
   return bcrypt.compare(candidatePassword, this.password)
 }
 
