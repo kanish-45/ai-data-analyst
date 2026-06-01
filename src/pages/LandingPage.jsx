@@ -14,19 +14,19 @@ import { useAuth } from '../context/AuthContext'
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 const features = [
-  { icon: Brain,        title: 'AI-Powered Insights',      desc: 'Get instant, deep analysis of your datasets using state-of-the-art local language models.',  color: 'from-violet-500/20 to-purple-500/10',  border: 'border-violet-500/20',  iconColor: 'text-violet-400'  },
+  { icon: Brain,        title: 'AI-Powered Insights',      desc: 'Ask questions in plain English and get real answers powered by Llama 3 running on Groq — fast, accurate, and grounded in your data.',                                color: 'from-violet-500/20 to-purple-500/10',  border: 'border-violet-500/20',  iconColor: 'text-violet-400'  },
   { icon: Upload,       title: 'Drag and Drop Upload',      desc: 'Upload CSV, Excel, or JSON files instantly. No setup required — just drop and analyze.',       color: 'from-cyan-500/20 to-teal-500/10',      border: 'border-cyan-500/20',    iconColor: 'text-cyan-400'    },
   { icon: BarChart3,    title: 'Beautiful Visualizations',  desc: 'Auto-generated charts and graphs that turn raw numbers into clear visual stories.',            color: 'from-emerald-500/20 to-green-500/10',  border: 'border-emerald-500/20', iconColor: 'text-emerald-400' },
   { icon: MessageSquare,title: 'Chat With Your Data',       desc: 'Ask questions in plain English. Get answers, trends, and summaries instantly.',                color: 'from-amber-500/20 to-orange-500/10',   border: 'border-amber-500/20',   iconColor: 'text-amber-400'   },
-  { icon: Zap,          title: 'Lightning Fast',            desc: 'Results in seconds, not minutes. Built for speed with optimized local AI pipelines.',          color: 'from-yellow-500/20 to-amber-500/10',   border: 'border-yellow-500/20',  iconColor: 'text-yellow-400'  },
-  { icon: Shield,       title: 'Privacy First',             desc: 'Your data never leaves your machine. Zero cloud storage, zero tracking, zero compromise.',     color: 'from-rose-500/20 to-pink-500/10',      border: 'border-rose-500/20',    iconColor: 'text-rose-400'    },
+  { icon: Zap,          title: 'Lightning Fast',            desc: 'Tokens stream back in milliseconds, not minutes. Built on Groq\'s ultra-low-latency inference for a responsive chat experience.',                                color: 'from-yellow-500/20 to-amber-500/10',   border: 'border-yellow-500/20',  iconColor: 'text-yellow-400'  },
+  { icon: Shield,       title: 'Secure by Design',          desc: 'JWT-authenticated API, OAuth sign-in via Google or GitHub, encrypted storage, and ownership-scoped access on every dataset and chat.',                          color: 'from-rose-500/20 to-pink-500/10',      border: 'border-rose-500/20',    iconColor: 'text-rose-400'    },
 ]
 
 const stats = [
-  { value: '10M+', label: 'Data Points Analyzed' },
-  { value: '98%',  label: 'Accuracy Rate'         },
-  { value: '2s',   label: 'Average Response'       },
-  { value: '50+',  label: 'File Formats'           },
+  { value: 'CSV',    label: 'Excel & JSON ready'     },
+  { value: 'Groq',   label: 'Llama 3 inference'      },
+  { value: 'JWT',    label: 'Secure authentication'  },
+  { value: 'Free',   label: 'No credit card needed'  },
 ]
 
 const previewStats = [
@@ -167,7 +167,7 @@ const plans = [
     features: [
       { text: '5 datasets per month',          included: true  },
       { text: 'Up to 10,000 rows per file',     included: true  },
-      { text: 'AI chat (local Ollama)',          included: true  },
+      { text: 'AI chat (Llama 3 via Groq)',     included: true  },
       { text: 'Basic charts & visualizations',  included: true  },
       { text: 'CSV & JSON support',             included: true  },
       { text: 'Excel file support',             included: false },
@@ -218,11 +218,11 @@ const plans = [
 ]
 
 const faqs = [
-  { q: 'Is my data safe?',                  a: 'Completely. DataMind runs AI locally on your machine via Ollama — your data never leaves your computer or gets sent to any cloud server.' },
+  { q: 'Is my data safe?',                  a: 'Yes. Authentication uses JWT tokens with OAuth (Google/GitHub) support, and every dataset and chat is ownership-scoped — only you can access your own data. Datasets are encrypted in transit (HTTPS) and stored in MongoDB Atlas. AI inference runs on Groq\'s infrastructure; your data is sent only for the specific query you ask and is never used to train models.' },
   { q: 'What file formats are supported?',  a: 'CSV and JSON work out of the box. For Excel (.xlsx, .xls), install the xlsx npm package once and it works automatically.' },
   { q: 'Do I need coding experience?',      a: 'Not at all. Just upload your file, type your question in plain English, and get instant answers. No SQL, no Python, no setup.' },
   { q: 'Can I cancel anytime?',             a: 'Yes. No contracts, no lock-in. Cancel your subscription anytime from your account settings with one click.' },
-  { q: 'What AI models can I use?',         a: 'Any model supported by Ollama — Llama 3.2, Mistral, Gemma 2, Phi-3, DeepSeek R1, and more. Switch between them in the chat UI.' },
+  { q: 'What AI models can I use?',         a: 'DataMind currently uses Llama 3 models served through Groq for fast, low-latency inference. Future versions will add Mixtral and Gemma options.' },
 ]
 
 // ── Component ─────────────────────────────────────────────────────────────────
