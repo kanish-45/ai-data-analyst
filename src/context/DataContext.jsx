@@ -47,12 +47,15 @@ export function useData() {
   return ctx
 }
 
-// ── CSV Parser ────────────────────────────────────────────────────────────────
-export function parseCSV(text) {
-  const lines = text.trim().split('\n').filter(Boolean)
+// Yields to the browser between chunks so the UI stays responsive
+const yieldToBrowser = () => new Promise((r) => setTimeout(r, 0))
+
+// ── CSV Parser — chunked, async, with real progress ──────────────────────────
+export async function parseCSV(text, onProgress) {
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0)
   if (lines.length === 0) return { columns: [], rows: [], rowCount: 0 }
 
-  // Auto-detect delimiter: comma, semicolon, or tab
+  // Auto-detect delimiter
   const delimiters = [',', ';', '\t']
   const delimiter  = delimiters.reduce((best, d) =>
     lines[0].split(d).length > lines[0].split(best).length ? d : best, ',')
@@ -71,22 +74,34 @@ export function parseCSV(text) {
 
   const headers = parseRow(lines[0]).map((h) => h.replace(/^"|"$/g, '').trim())
 
-  // Load ALL rows for stats, but only keep first 10 as sample
-  const allRows = lines.slice(1).map((line) => {
-    const vals = parseRow(line)
-    return Object.fromEntries(headers.map((h, i) => [h, vals[i]?.replace(/^"|"$/g, '').trim() ?? '']))
-  })
+  // Parse in chunks of 1,000 rows, yielding between chunks
+  const dataLines = lines.slice(1)
+  const totalRows = dataLines.length
+  const chunkSize = 1000
+  const allRows   = []
+
+  for (let i = 0; i < totalRows; i += chunkSize) {
+    const slice = dataLines.slice(i, i + chunkSize)
+    for (const line of slice) {
+      const vals = parseRow(line)
+      allRows.push(
+        Object.fromEntries(headers.map((h, idx) => [h, vals[idx]?.replace(/^"|"$/g, '').trim() ?? '']))
+      )
+    }
+    onProgress?.(Math.min(i + chunkSize, totalRows), totalRows)
+    await yieldToBrowser()
+  }
 
   return {
     columns:  headers,
-    rows:     allRows.slice(0, 10),  // sample for preview & AI context
-    allRows,                          // full rows for stats
+    rows:     allRows.slice(0, 10),
+    allRows,
     rowCount: allRows.length,
   }
 }
 
-// ── JSON Parser ───────────────────────────────────────────────────────────────
-export function parseJSON(text) {
+// ── JSON Parser — async chunked ──────────────────────────────────────────────
+export async function parseJSON(text, onProgress) {
   const data = JSON.parse(text)
   const arr  = Array.isArray(data)
     ? data
@@ -94,18 +109,25 @@ export function parseJSON(text) {
 
   if (arr.length === 0) return { columns: [], rows: [], rowCount: 0 }
 
-  // Flatten one level of nesting
-  const flat = arr.map((item) => {
-    const out = {}
-    for (const [k, v] of Object.entries(item)) {
-      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-        for (const [k2, v2] of Object.entries(v)) out[`${k}.${k2}`] = v2
-      } else {
-        out[k] = v
+  const chunkSize = 1000
+  const flat = []
+
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    const slice = arr.slice(i, i + chunkSize)
+    for (const item of slice) {
+      const out = {}
+      for (const [k, v] of Object.entries(item)) {
+        if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+          for (const [k2, v2] of Object.entries(v)) out[`${k}.${k2}`] = v2
+        } else {
+          out[k] = v
+        }
       }
+      flat.push(out)
     }
-    return out
-  })
+    onProgress?.(Math.min(i + chunkSize, arr.length), arr.length)
+    await yieldToBrowser()
+  }
 
   const columns = Object.keys(flat[0])
   return {
@@ -116,19 +138,21 @@ export function parseJSON(text) {
   }
 }
 
-// ── Excel Parser (uses xlsx npm package if available) ─────────────────────────
-export async function parseExcel(arrayBuffer) {
+// ── Excel Parser ─────────────────────────────────────────────────────────────
+// xlsx parses internally as one operation — no granular progress is available.
+// We at least call onProgress once at start so the UI shows "Parsing Excel…"
+export async function parseExcel(arrayBuffer, onProgress) {
   try {
-    // Dynamically import xlsx — works if user has run: npm install xlsx
+    onProgress?.(0, 1)
     const XLSX = await import('xlsx')
     const wb   = XLSX.read(arrayBuffer, { type: 'array' })
 
-    // Parse first sheet
-    const ws      = wb.Sheets[wb.SheetNames[0]]
+    const ws       = wb.Sheets[wb.SheetNames[0]]
     const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '' })
 
     if (jsonData.length === 0) return { columns: [], rows: [], rowCount: 0 }
 
+    onProgress?.(jsonData.length, jsonData.length)
     const columns = Object.keys(jsonData[0])
     return {
       columns,
@@ -137,7 +161,6 @@ export async function parseExcel(arrayBuffer) {
       rowCount: jsonData.length,
     }
   } catch {
-    // xlsx not installed — return placeholder
     return {
       columns:  ['Run: npm install xlsx — to enable Excel parsing'],
       rows:     [],
@@ -148,19 +171,18 @@ export async function parseExcel(arrayBuffer) {
   }
 }
 
-// ── Build AI context string from dataset ──────────────────────────────────────
+// ── Build AI context string from dataset ─────────────────────────────────────
 export function buildDatasetContext(dataset) {
   if (!dataset) return ''
 
   const sourceRows = dataset.allRows || dataset.rows
 
-  // Compute numeric column stats
   const numericStats = dataset.columns
     .map((col) => {
       const vals = sourceRows
         .map((r) => parseFloat(r[col]))
         .filter((v) => !isNaN(v))
-      if (vals.length < sourceRows.length * 0.4) return null // mostly non-numeric
+      if (vals.length < sourceRows.length * 0.4) return null
       const sum = vals.reduce((a, b) => a + b, 0)
       const avg = sum / vals.length
       const min = Math.min(...vals)
@@ -169,7 +191,6 @@ export function buildDatasetContext(dataset) {
     })
     .filter(Boolean)
 
-  // Unique values for categorical columns (top 5)
   const categoricalStats = dataset.columns
     .filter((col) => {
       const vals = sourceRows.map((r) => parseFloat(r[col]))
@@ -183,7 +204,6 @@ export function buildDatasetContext(dataset) {
       return `  ${col}: ${unique.join(', ')}${unique.length === 5 ? '…' : ''}`
     })
 
-  // Format sample rows
   const sampleRows = dataset.rows
     .slice(0, 5)
     .map((row, i) =>

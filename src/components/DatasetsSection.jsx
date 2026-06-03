@@ -366,7 +366,7 @@ export default function DatasetsSection({ onNavigate }) {
       {/* Preview Modal */}
       {previewDs && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPreviewDs(null)}>
-          <div className="glass-card rounded-3xl border border-white/10 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-card rounded-3xl border border-white/10 w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh] mx-4 sm:mx-0 flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
               <div>
                 <h3 className="font-bold text-white">{previewDs.name}</h3>

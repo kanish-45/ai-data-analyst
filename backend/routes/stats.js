@@ -16,14 +16,17 @@ router.get('/overview', async (req, res) => {
     // Run all queries in parallel for speed
     const [
       totalDatasets,
+      totalSessions,        // ← NEW: real session count
       totalChats,
       recentDatasets,
       recentChats,
     ] = await Promise.all([
-      // Total datasets uploaded by this user
       Dataset.countDocuments({ user: userId }),
 
-      // Total chat messages sent by this user
+      // Real chat-session count (each saved conversation = one session)
+      ChatSession.countDocuments({ user: userId }),
+
+      // Total chat messages this user has sent/received
       ChatSession.aggregate([
         { $match: { user: userId } },
         { $project: { messageCount: { $size: '$messages' } } },
@@ -52,39 +55,13 @@ router.get('/overview', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5)
 
-    // Recent chat sessions
-    const latestChats = await ChatSession
-      .find({ user: userId })
-      .select('title createdAt messages')
-      .sort({ updatedAt: -1 })
-      .limit(5)
-
-    // Build recent activity feed (mix of datasets and chats)
-    const activity = [
-      ...latestDatasets.map((d) => ({
-        name:   d.name,
-        action: 'Uploaded',
-        time:   timeAgo(d.createdAt),
-        status: 'success',
-        type:   'dataset',
-      })),
-      ...latestChats.map((c) => ({
-        name:   c.title || 'Chat session',
-        action: `${c.messages?.length || 0} messages`,
-        time:   timeAgo(c.createdAt),
-        status: 'success',
-        type:   'chat',
-      })),
-    ]
-      .sort((a, b) => new Date(b.rawTime) - new Date(a.rawTime))
-      .slice(0, 5)
-
     res.json({
       stats: {
         totalDatasets,
+        totalSessions,     // ← NEW: real session count
         totalMessages,
-        recentDatasets,  // last 7 days
-        recentChats,     // today
+        recentDatasets,    // last 7 days
+        recentChats,       // today
       },
       activity: latestDatasets.map((d) => ({
         name:   d.name,
@@ -96,6 +73,84 @@ router.get('/overview', async (req, res) => {
   } catch (err) {
     console.error('Stats error:', err)
     res.status(500).json({ message: 'Failed to load stats.' })
+  }
+})
+
+// ── GET /api/stats/notifications ──────────────────────────────────────────────
+// Real notifications based on actual user activity.
+// We synthesize notifications from the most recent meaningful events:
+//   • account creation (welcome)
+//   • dataset uploads
+//   • chat sessions started
+router.get('/notifications', async (req, res) => {
+  try {
+    const userId = req.user._id
+    const user   = req.user
+
+    // Pull the most recent events
+    const [latestDatasets, latestSessions] = await Promise.all([
+      Dataset.find({ user: userId })
+        .select('name createdAt')
+        .sort({ createdAt: -1 })
+        .limit(5),
+      ChatSession.find({ user: userId })
+        .select('title createdAt messages')
+        .sort({ createdAt: -1 })
+        .limit(5),
+    ])
+
+    const notifications = []
+
+    // Dataset upload notifications
+    for (const d of latestDatasets) {
+      notifications.push({
+        id:       `dataset-${d._id}`,
+        title:    'Dataset uploaded',
+        desc:     `${d.name} is ready to explore`,
+        time:     timeAgo(d.createdAt),
+        rawTime:  d.createdAt,
+        type:     'dataset',
+      })
+    }
+
+    // Chat-session notifications
+    for (const s of latestSessions) {
+      const msgCount = s.messages?.length || 0
+      if (msgCount === 0) continue   // skip empty sessions
+      notifications.push({
+        id:       `chat-${s._id}`,
+        title:    s.title || 'Chat session',
+        desc:     `${msgCount} message${msgCount !== 1 ? 's' : ''} in this conversation`,
+        time:     timeAgo(s.createdAt),
+        rawTime:  s.createdAt,
+        type:     'chat',
+      })
+    }
+
+    // Account welcome — only if this is a relatively new account or there's
+    // nothing else to show
+    if (user.createdAt) {
+      const ageMs = Date.now() - new Date(user.createdAt).getTime()
+      if (ageMs < 7 * 24 * 60 * 60 * 1000 || notifications.length === 0) {
+        notifications.push({
+          id:      `welcome-${user._id}`,
+          title:   'Welcome to DataMind AI! 👋',
+          desc:    'Upload a dataset to get started',
+          time:    timeAgo(user.createdAt),
+          rawTime: user.createdAt,
+          type:    'welcome',
+        })
+      }
+    }
+
+    // Sort newest-first and cap at 8
+    notifications.sort((a, b) => new Date(b.rawTime) - new Date(a.rawTime))
+    const limited = notifications.slice(0, 8).map(({ rawTime, ...rest }) => rest)
+
+    res.json({ notifications: limited })
+  } catch (err) {
+    console.error('Notifications error:', err)
+    res.status(500).json({ message: 'Failed to load notifications.' })
   }
 })
 

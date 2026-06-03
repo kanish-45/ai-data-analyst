@@ -11,18 +11,18 @@ import { useData, buildDatasetContext } from '../context/DataContext'
 import { useAuth } from '../context/AuthContext'
 
 // ─── Config ────────────────────────────────────────────────────────────────────
-const COMPLETION_URL = `${import.meta.env.VITE_API_URL || 'https://ai-data-analyst-backend-xj17.onrender.com/api'}/chat/completion`
-const API_URL = 'https://ai-data-analyst-backend-xj17.onrender.com/api'
-const DEFAULT_MODEL = 'llama3.2'
+const API_URL          = import.meta.env.VITE_API_URL || 'https://ai-data-analyst-backend-xj17.onrender.com/api'
+const COMPLETION_URL   = `${API_URL}/chat/completion`
+const DEFAULT_MODEL    = 'llama3.2'
 
 const AVAILABLE_MODELS = [
-  { value: 'llama3.2',    label: 'Llama 3.2',   size: '2GB',   speed: 'Fast'     },
-  { value: 'llama3.1',    label: 'Llama 3.1',   size: '4.7GB', speed: 'Smart'    },
-  { value: 'mistral',     label: 'Mistral 7B',  size: '4.1GB', speed: 'Balanced' },
-  { value: 'gemma2',      label: 'Gemma 2',     size: '5.4GB', speed: 'Smart'    },
-  { value: 'phi3',        label: 'Phi-3 Mini',  size: '2.3GB', speed: 'Fastest'  },
-  { value: 'qwen2.5',     label: 'Qwen 2.5',    size: '4.4GB', speed: 'Smart'    },
-  { value: 'deepseek-r1', label: 'DeepSeek R1', size: '4.7GB', speed: 'Smartest' },
+  { value: 'llama3.2',    label: 'Llama 3.2',   size: '8B',  speed: 'Fast'     },
+  { value: 'llama3.1',    label: 'Llama 3.1',   size: '70B', speed: 'Smart'    },
+  { value: 'mistral',     label: 'Mistral 7B',  size: '7B',  speed: 'Balanced' },
+  { value: 'gemma2',      label: 'Gemma 2',     size: '9B',  speed: 'Smart'    },
+  { value: 'phi3',        label: 'Phi-3 Mini',  size: '3B',  speed: 'Fastest'  },
+  { value: 'qwen2.5',     label: 'Qwen 2.5',    size: '7B',  speed: 'Smart'    },
+  { value: 'deepseek-r1', label: 'DeepSeek R1', size: '7B',  speed: 'Smartest' },
 ]
 
 const BASE_SYSTEM_PROMPT = `You are DataMind AI, an expert data analyst assistant inside a modern analytics dashboard.
@@ -73,11 +73,10 @@ async function apiCall(endpoint, options = {}) {
   return data
 }
 
-// ─── Ollama streamer ───────────────────────────────────────────────────────────
 // ─── AI completion streamer (calls our backend, which calls Groq) ──────────────
-async function streamOllama(history, model, systemPrompt, onToken) {
-  const token = localStorage.getItem('datamind_token')
- 
+async function streamCompletion(history, model, systemPrompt, onToken) {
+  const token = getToken()
+
   const res = await fetch(COMPLETION_URL, {
     method:  'POST',
     headers: {
@@ -90,7 +89,7 @@ async function streamOllama(history, model, systemPrompt, onToken) {
       messages: history,
     }),
   })
- 
+
   if (!res.ok) {
     let msg = `AI service error ${res.status}`
     try {
@@ -100,30 +99,29 @@ async function streamOllama(history, model, systemPrompt, onToken) {
     if (res.status === 401) throw new Error('Please sign in again — your session expired.')
     throw new Error(msg)
   }
- 
+
   const reader  = res.body.getReader()
   const decoder = new TextDecoder()
   let   buffer  = ''
   let   full    = ''
- 
+
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
- 
+
     buffer += decoder.decode(value, { stream: true })
     const events = buffer.split('\n\n')
-    buffer = events.pop() // keep the (possibly partial) last event
- 
+    buffer = events.pop()
+
     for (const evt of events) {
-      // Each event is one or more lines like "event: x" and "data: {...}"
       let eventName = 'message'
       let dataLine  = ''
       for (const line of evt.split('\n')) {
-        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        if (line.startsWith('event:'))      eventName = line.slice(6).trim()
         else if (line.startsWith('data:'))  dataLine  = line.slice(5).trim()
       }
       if (!dataLine) continue
- 
+
       if (eventName === 'error') {
         try {
           const { message } = JSON.parse(dataLine)
@@ -133,18 +131,15 @@ async function streamOllama(history, model, systemPrompt, onToken) {
         }
       }
       if (eventName === 'done') return full
- 
+
       try {
         const { token: chunk } = JSON.parse(dataLine)
         if (chunk) { full += chunk; onToken(full) }
-      } catch {
-        /* malformed chunk — skip */
-      }
+      } catch { /* skip malformed */ }
     }
   }
   return full
 }
-
 
 // ─── Markdown renderer ─────────────────────────────────────────────────────────
 function MessageText({ text }) {
@@ -179,45 +174,6 @@ function renderInlineBold(text) {
   if (!text.includes('**')) return text
   return text.split(/\*\*(.*?)\*\*/g).map((p, i) =>
     i % 2 === 1 ? <strong key={i} className="text-white font-semibold">{p}</strong> : p
-  )
-}
-
-// ─── Ollama setup guide ────────────────────────────────────────────────────────
-function SetupGuide({ model, onDismiss }) {
-  const steps = [
-    { step: '1', label: 'Download & install Ollama', cmd: null, link: 'https://ollama.com' },
-    { step: '2', label: 'Start Ollama with CORS',    cmd: `$env:OLLAMA_ORIGINS="*"; ollama serve`, link: null },
-    { step: '3', label: 'Pull a model',              cmd: `ollama pull ${model}`, link: null },
-  ]
-  return (
-    <div className="mb-4 flex-shrink-0 rounded-2xl bg-amber-500/8 border border-amber-500/20 overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-amber-500/15">
-        <div className="flex items-center gap-2">
-          <AlertCircle size={15} className="text-amber-400" />
-          <p className="text-sm font-semibold text-amber-400">Ollama is not running</p>
-        </div>
-        <button onClick={onDismiss} className="text-xs text-gray-500 hover:text-white transition-colors">Dismiss</button>
-      </div>
-      <div className="p-5 space-y-3">
-        {steps.map((s) => (
-          <div key={s.step} className="flex items-start gap-3">
-            <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">{s.step}</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-gray-300 mb-1">{s.label}</p>
-              {s.cmd && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/40 font-mono">
-                  <span className="text-xs text-cyan-400 flex-1 break-all">{s.cmd}</span>
-                  <button onClick={() => navigator.clipboard.writeText(s.cmd)} className="text-gray-600 hover:text-white transition-colors flex-shrink-0">
-                    <Copy size={11} />
-                  </button>
-                </div>
-              )}
-              {s.link && <a href={s.link} target="_blank" rel="noreferrer" className="text-xs text-cyan-400 hover:underline">{s.link}</a>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -275,7 +231,6 @@ function ChatHistorySidebar({ sessions, activeSessionId, onSelect, onDelete, onN
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
-  // Group sessions by date
   const grouped = sessions.reduce((acc, session) => {
     const label = formatDate(session.updatedAt)
     if (!acc[label]) acc[label] = []
@@ -285,7 +240,6 @@ function ChatHistorySidebar({ sessions, activeSessionId, onSelect, onDelete, onN
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-2">
           <MessageSquare size={15} className="text-cyan-400" />
@@ -298,7 +252,6 @@ function ChatHistorySidebar({ sessions, activeSessionId, onSelect, onDelete, onN
         </button>
       </div>
 
-      {/* Session list */}
       <div className="flex-1 overflow-y-auto py-2">
         {loading ? (
           <div className="flex items-center justify-center py-8">
@@ -333,7 +286,6 @@ function ChatHistorySidebar({ sessions, activeSessionId, onSelect, onDelete, onN
                       <span className="text-xs text-gray-700">{session.messageCount} messages</span>
                     </div>
                   </button>
-                  {/* Delete button */}
                   <button
                     onClick={(e) => { e.stopPropagation(); onDelete(session.id) }}
                     className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center text-gray-600 hover:text-rose-400 transition-all flex-shrink-0 mt-0.5"
@@ -378,7 +330,7 @@ export default function ChatUI({ onNavigateToUpload }) {
     role: 'assistant',
     text: dataset
       ? `Hello! I've loaded **${dataset.name}** — ${dataset.rowCount.toLocaleString()} rows across ${dataset.columns.length} columns. Ask me anything about this data!`
-      : "Hello! I'm DataMind AI, running locally via Ollama. Upload a dataset and ask me anything about it — trends, summaries, patterns, or analysis.",
+      : "Hello! I'm DataMind AI. Upload a dataset and ask me anything — trends, summaries, patterns, or detailed analysis.",
     time: nowTime(),
   })
 
@@ -393,23 +345,20 @@ export default function ChatUI({ onNavigateToUpload }) {
   const [likedMsgs,     setLikedMsgs]     = useState({})
   const [dislikedMsgs,  setDislikedMsgs]  = useState({})
 
-  // Chat history state
   const [sessions,         setSessions]         = useState([])
   const [activeSessionId,  setActiveSessionId]  = useState(null)
   const [sessionsLoading,  setSessionsLoading]  = useState(false)
   const [sidebarOpen,      setSidebarOpen]      = useState(true)
-  const [savingSession,    setSavingSession]     = useState(false)
+  const [savingSession,    setSavingSession]    = useState(false)
 
   const bottomRef   = useRef(null)
   const textareaRef = useRef(null)
   const prevDataset = useRef(activeDataset?.id)
 
   const systemPrompt    = BASE_SYSTEM_PROMPT + buildDatasetContext(activeDataset)
-  const isOllamaDown    = error?.includes('Failed to fetch') || error?.includes('ERR_CONNECTION_REFUSED')
   const showSuggestions = messages.length <= 1 && !isLoading
   const SUGGESTIONS     = activeDataset ? SUGGESTIONS_WITH_DATA : SUGGESTIONS_NO_DATA
 
-  // ── Load sessions on mount ────────────────────────────────────────────────────
   useEffect(() => {
     if (user) loadSessions()
   }, [user])
@@ -426,12 +375,10 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }
 
-  // ── Auto-scroll ───────────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
 
-  // ── Auto-resize textarea ──────────────────────────────────────────────────────
   useEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
@@ -439,7 +386,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
   }, [input])
 
-  // ── Reset chat when dataset changes ──────────────────────────────────────────
   useEffect(() => {
     if (activeDataset?.id !== prevDataset.current) {
       prevDataset.current = activeDataset?.id
@@ -447,7 +393,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }, [activeDataset])
 
-  // ── Create new session in DB ──────────────────────────────────────────────────
   const createSession = async () => {
     if (!user) return null
     try {
@@ -470,7 +415,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }
 
-  // ── Save messages to DB ───────────────────────────────────────────────────────
   const saveMessagesToDB = async (sessionId, newMessages) => {
     if (!user || !sessionId) return
     setSavingSession(true)
@@ -479,7 +423,6 @@ export default function ChatUI({ onNavigateToUpload }) {
         method: 'POST',
         body: JSON.stringify({ messages: newMessages }),
       })
-      // Update session title in sidebar if it was generated
       setSessions((prev) =>
         prev.map((s) => s.id === sessionId ? { ...s, ...data.session } : s)
       )
@@ -490,7 +433,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }
 
-  // ── Load a session ────────────────────────────────────────────────────────────
   const loadSession = async (session) => {
     try {
       const data = await apiCall(`/chat/sessions/${session.id}`)
@@ -509,7 +451,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }
 
-  // ── Delete a session ──────────────────────────────────────────────────────────
   const deleteSession = async (sessionId) => {
     try {
       await apiCall(`/chat/sessions/${sessionId}`, { method: 'DELETE' })
@@ -522,7 +463,6 @@ export default function ChatUI({ onNavigateToUpload }) {
     }
   }
 
-  // ── Start a brand new chat ────────────────────────────────────────────────────
   const startNewChat = () => {
     setMessages([makeWelcome(activeDataset)])
     setActiveSessionId(null)
@@ -532,12 +472,11 @@ export default function ChatUI({ onNavigateToUpload }) {
     setDislikedMsgs({})
   }
 
-  // ── Build Ollama history ──────────────────────────────────────────────────────
+  // Build message history for the completion request
   const buildHistory = (msgs) =>
     msgs.filter((m) => !m.streaming && m.text)
         .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }))
 
-  // ── Send message ──────────────────────────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim()
     if (!text || isLoading) return
@@ -558,22 +497,16 @@ export default function ChatUI({ onNavigateToUpload }) {
     let finalAiText = ''
 
     try {
-      finalAiText = await streamOllama(buildHistory(updated), model, systemPrompt, (fullText) => {
+      finalAiText = await streamCompletion(buildHistory(updated), model, systemPrompt, (fullText) => {
         setMessages((prev) => prev.map((m) => m.id === aiId ? { ...m, text: fullText } : m))
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
       })
 
       setMessages((prev) => prev.map((m) => m.id === aiId ? { ...m, streaming: false } : m))
 
-      // Save to MongoDB
       if (user) {
         let sessionId = activeSessionId
-
-        // Create session on first real message
-        if (!sessionId) {
-          sessionId = await createSession()
-        }
-
+        if (!sessionId) sessionId = await createSession()
         if (sessionId) {
           await saveMessagesToDB(sessionId, [
             { role: 'user',      text,          time: userMsg.time },
@@ -626,7 +559,6 @@ export default function ChatUI({ onNavigateToUpload }) {
         {/* Header */}
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <div className="flex items-center gap-3">
-            {/* Sidebar toggle */}
             {user && (
               <button onClick={() => setSidebarOpen((v) => !v)}
                 className="w-8 h-8 rounded-xl glass border border-white/10 flex items-center justify-center text-gray-400 hover:text-white transition-all"
@@ -646,7 +578,7 @@ export default function ChatUI({ onNavigateToUpload }) {
                 ) : (
                   <><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-xs text-emerald-400">
-                      Local AI · Ollama{savingSession ? ' · Saving…' : ''}
+                      Cloud AI · Groq{savingSession ? ' · Saving…' : ''}
                     </span></>
                 )}
               </div>
@@ -698,9 +630,6 @@ export default function ChatUI({ onNavigateToUpload }) {
           </div>
         )}
 
-        {/* Ollama setup guide */}
-        {isOllamaDown && <SetupGuide model={model} onDismiss={() => setError(null)} />}
-
         {/* Messages */}
         <div className="flex-1 overflow-y-auto space-y-5 pr-1 mb-4">
           {messages.map((msg) => (
@@ -710,7 +639,7 @@ export default function ChatUI({ onNavigateToUpload }) {
                 {msg.role === 'user' ? <User size={16} className="text-white" /> : <Brain size={16} className="text-white" />}
               </div>
 
-              <div className={'max-w-[78%] flex flex-col gap-1 ' + (msg.role === 'user' ? 'items-end' : 'items-start')}>
+              <div className={'max-w-[88%] sm:max-w-[78%] flex flex-col gap-1 ' + (msg.role === 'user' ? 'items-end' : 'items-start')}>
                 <div className={'px-4 py-3 rounded-2xl text-sm leading-relaxed ' +
                   (msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-500 to-teal-500 text-white rounded-tr-sm'
@@ -754,7 +683,7 @@ export default function ChatUI({ onNavigateToUpload }) {
           ))}
 
           {/* Error */}
-          {error && !isOllamaDown && (
+          {error && (
             <div className="flex items-start gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20">
               <AlertCircle size={15} className="text-rose-400 flex-shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
@@ -807,7 +736,7 @@ export default function ChatUI({ onNavigateToUpload }) {
             <p className="text-xs text-gray-700">Enter to send · Shift+Enter for new line</p>
             <p className="text-xs text-gray-700 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-              {model} · ollama
+              {model} · groq
             </p>
           </div>
         </div>

@@ -62,6 +62,7 @@ export default function FileUpload({ onNavigateToChat }) {
       id: Date.now() + Math.random(), file,
       name: file.name, size: file.size,
       valid: isValid(file), status: isValid(file) ? 'ready' : 'error',
+      progress: 0, phase: '',
     }))
     setFiles((prev) => [...prev, ...newFiles])
     setAnalyzed(false); setParsedDataset(null)
@@ -78,32 +79,67 @@ export default function FileUpload({ onNavigateToChat }) {
     setParseError(null); setSavedToCloud(false)
   }
 
-  // ── Parse file ───────────────────────────────────────────────────────────────
-  const parseFile = (fileObj) => new Promise((resolve, reject) => {
-    const ext    = getExt(fileObj.name)
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('File read failed'))
+  // Update the row of a single file currently being processed
+  const updateFile = (id, patch) => {
+    setFiles((prev) => prev.map((f) => f.id === id ? { ...f, ...patch } : f))
+  }
 
-    if (ext === 'csv') {
-      reader.onload = (e) => {
-        try { resolve(buildDataset(fileObj, ext, parseCSV(e.target.result))) }
-        catch (err) { reject(new Error(`CSV error: ${err.message}`)) }
-      }
-      reader.readAsText(fileObj)
-    } else if (ext === 'json') {
-      reader.onload = (e) => {
-        try { resolve(buildDataset(fileObj, ext, parseJSON(e.target.result))) }
-        catch (err) { reject(new Error(`JSON error: ${err.message}`)) }
-      }
-      reader.readAsText(fileObj)
-    } else {
-      reader.onload = async (e) => {
-        try { resolve(buildDataset(fileObj, ext, await parseExcel(e.target.result))) }
-        catch (err) { reject(new Error(`Excel error: ${err.message}`)) }
-      }
-      reader.readAsArrayBuffer(fileObj)
+  // ── Read a file with REAL byte-level progress ────────────────────────────────
+  const readFile = (fileObj, mode, onProgress) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror  = () => reject(new Error('File read failed'))
+    reader.onload   = (e) => resolve(e.target.result)
+    reader.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded, e.total)
     }
+    if (mode === 'text')  reader.readAsText(fileObj)
+    else                  reader.readAsArrayBuffer(fileObj)
   })
+
+  // ── Parse file with progress reporting ───────────────────────────────────────
+  const parseFile = async (fileRecord) => {
+    const fileObj = fileRecord.file
+    const ext     = getExt(fileObj.name)
+
+    // Phase 1: READING (real byte progress)
+    updateFile(fileRecord.id, { phase: 'reading', progress: 0 })
+
+    const readMode = (ext === 'csv' || ext === 'json') ? 'text' : 'array'
+    const content  = await readFile(fileObj, readMode, (loaded, total) => {
+      // Reading takes ~40% of the visible bar; parsing takes the rest
+      const pct = total > 0 ? Math.round((loaded / total) * 40) : 0
+      updateFile(fileRecord.id, {
+        progress: pct,
+        phase:    'reading',
+        bytesLoaded: loaded,
+        bytesTotal:  total,
+      })
+    })
+
+    // Phase 2: PARSING (real row progress)
+    updateFile(fileRecord.id, { phase: 'parsing', progress: 40 })
+
+    const onParseProgress = (rowsDone, rowsTotal) => {
+      const pct = rowsTotal > 0
+        ? 40 + Math.round((rowsDone / rowsTotal) * 55)  // parsing = next 55%
+        : 50
+      updateFile(fileRecord.id, {
+        progress: pct,
+        phase:    'parsing',
+        rowsDone,
+        rowsTotal,
+      })
+    }
+
+    let parsed
+    if (ext === 'csv')      parsed = await parseCSV(content,  onParseProgress)
+    else if (ext === 'json') parsed = await parseJSON(content, onParseProgress)
+    else                     parsed = await parseExcel(content, onParseProgress)
+
+    updateFile(fileRecord.id, { phase: 'finalizing', progress: 95 })
+
+    return buildDataset(fileObj, ext, parsed)
+  }
 
   const buildDataset = (fileObj, ext, parsed) => ({
     id:       Date.now() + Math.random(),
@@ -121,7 +157,6 @@ export default function FileUpload({ onNavigateToChat }) {
     xlsxMissing: parsed.xlsxMissing || false,
   })
 
-  // ── Compute column stats for MongoDB storage ──────────────────────────────────
   const computeStats = (dataset) => {
     const rows = dataset.allRows || dataset.rows || []
     const stats = {}
@@ -151,40 +186,28 @@ export default function FileUpload({ onNavigateToChat }) {
 
     setAnalyzing(true); setAnalyzed(false)
     setParsedDataset(null); setParseError(null); setSavedToCloud(false)
-    setFiles((prev) => prev.map((f) => f.valid ? { ...f, progress: 0, status: 'uploading' } : f))
-
-    let tick = 0
-    const interval = setInterval(() => {
-      tick = Math.min(tick + 18, 85)
-      setFiles((prev) => prev.map((f) => f.valid ? { ...f, progress: tick } : f))
-    }, 100)
+    setFiles((prev) => prev.map((f) => f.valid ? { ...f, status: 'uploading', progress: 0, phase: 'starting' } : f))
 
     try {
-      const dataset = await parseFile(validFiles[0].file)
-      clearInterval(interval)
-      setFiles((prev) => prev.map((f) => f.valid ? { ...f, progress: 100, status: 'done' } : f))
+      const fileRecord = validFiles[0]
+      const dataset    = await parseFile(fileRecord)
 
-      // Add to local context immediately
-      addDataset(dataset)
-      setParsedDataset(dataset)
-      setAnalyzed(true)
-
-      // Save to MongoDB if logged in
+      // Phase 3: SAVING to backend (if logged in)
       if (user) {
+        updateFile(fileRecord.id, { phase: 'saving', progress: 96 })
         try {
-          const columnStats  = computeStats(dataset)
-          const sampleRows   = (dataset.allRows || dataset.rows || []).slice(0, 20)
-
+          const columnStats = computeStats(dataset)
+          const sampleRows  = (dataset.allRows || dataset.rows || []).slice(0, 20)
           await saveDatasetToAPI({
-            name:        dataset.name,
-            type:        dataset.type,
-            size:        dataset.size,
-            rawSize:     dataset.rawSize,
-            rowCount:    dataset.rowCount,
-            columns:     dataset.columns,
+            name:     dataset.name,
+            type:     dataset.type,
+            size:     dataset.size,
+            rawSize:  dataset.rawSize,
+            rowCount: dataset.rowCount,
+            columns:  dataset.columns,
             sampleRows,
             columnStats,
-            tags:        dataset.tags,
+            tags:     dataset.tags,
           })
           setSavedToCloud(true)
         } catch (saveErr) {
@@ -192,8 +215,12 @@ export default function FileUpload({ onNavigateToChat }) {
           setSavedToCloud(false)
         }
       }
+
+      updateFile(fileRecord.id, { progress: 100, status: 'done', phase: 'done' })
+      addDataset(dataset)
+      setParsedDataset(dataset)
+      setAnalyzed(true)
     } catch (err) {
-      clearInterval(interval)
       setFiles((prev) => prev.map((f) => f.valid ? { ...f, status: 'error', progress: 0 } : f))
       setParseError(err.message)
     } finally {
@@ -213,6 +240,22 @@ export default function FileUpload({ onNavigateToChat }) {
   const validCount = files.filter((f) => f.valid).length
   const insights   = parsedDataset ? buildInsights(parsedDataset) : []
 
+  // Human-readable status text for the in-progress file row
+  const phaseLabel = (f) => {
+    if (f.phase === 'reading' && f.bytesTotal) {
+      return `Reading ${formatSize(f.bytesLoaded)} / ${formatSize(f.bytesTotal)}`
+    }
+    if (f.phase === 'parsing' && f.rowsTotal) {
+      return `Parsing ${f.rowsDone.toLocaleString()} / ${f.rowsTotal.toLocaleString()} rows`
+    }
+    if (f.phase === 'parsing')    return 'Parsing data…'
+    if (f.phase === 'reading')    return 'Reading file…'
+    if (f.phase === 'finalizing') return 'Finalizing…'
+    if (f.phase === 'saving')     return 'Saving to your account…'
+    if (f.phase === 'starting')   return 'Starting…'
+    return ''
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
 
@@ -228,35 +271,36 @@ export default function FileUpload({ onNavigateToChat }) {
           <Upload size={36} className={isDragging ? 'text-cyan-400' : 'text-gray-500'} />
         </div>
         {isDragging ? (
-          <><p className="text-xl font-bold text-cyan-400 mb-2">Drop your file here!</p>
-            <p className="text-gray-500 text-sm">Release to start parsing</p></>
+          <p className="text-xl font-bold text-cyan-400">Drop to upload</p>
         ) : (
-          <><p className="text-xl font-bold text-white mb-2">Drag and drop your dataset here</p>
-            <p className="text-gray-500 text-sm mb-6">or click to browse from your computer</p>
-            <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 text-white font-semibold text-sm hover:opacity-90 transition-all">
-              <Upload size={16} /> Browse Files
-            </div></>
+          <>
+            <p className="text-xl font-bold text-white mb-2">Drag & drop your data</p>
+            <p className="text-sm text-gray-400 mb-4">or click anywhere to browse</p>
+            <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs">
+              {allowedTypes.map((t) => (
+                <span key={t} className="px-2.5 py-1 rounded-full bg-white/5 border border-white/8 text-gray-400 font-medium uppercase">{t}</span>
+              ))}
+            </div>
+          </>
         )}
-        <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
-          {allowedTypes.map((ext) => (
-            <span key={ext} className="px-3 py-1 rounded-full glass border border-white/10 text-xs text-gray-400 uppercase font-medium">.{ext}</span>
-          ))}
-        </div>
       </div>
 
-      {/* File List */}
+      {/* File list */}
       {files.length > 0 && (
         <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-            <h3 className="font-bold text-white">{files.length} file{files.length > 1 ? 's' : ''} selected</h3>
-            <button onClick={handleReset} className="text-xs text-gray-500 hover:text-rose-400 transition-colors">Clear all</button>
+            <p className="text-sm text-gray-400">
+              <span className="text-white font-semibold">{files.length}</span> file{files.length !== 1 ? 's' : ''} selected
+            </p>
+            <button onClick={() => setFiles([])} className="text-xs text-gray-500 hover:text-rose-400 transition-colors">Clear all</button>
           </div>
-          <div className="divide-y divide-white/5">
+
+          <div className="p-3 space-y-2 max-h-72 overflow-y-auto">
             {files.map((f) => {
               const meta = getFileIcon(f.name)
               const Icon = meta.icon
               return (
-                <div key={f.id} className="flex items-center gap-4 px-6 py-4">
+                <div key={f.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/3 border border-white/5">
                   <div className={'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ' + meta.bg}>
                     <Icon size={18} className={meta.color} />
                   </div>
@@ -265,23 +309,33 @@ export default function FileUpload({ onNavigateToChat }) {
                       <span className="text-sm font-medium text-white truncate">{f.name}</span>
                       {!f.valid && <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400">Invalid</span>}
                     </div>
-                    <div className="text-xs text-gray-500">{formatSize(f.size)}</div>
+                    <div className="text-xs text-gray-500">
+                      {formatSize(f.size)}
+                      {f.status === 'uploading' && phaseLabel(f) && (
+                        <span className="text-cyan-400"> · {phaseLabel(f)}</span>
+                      )}
+                    </div>
                     {f.status === 'uploading' && (
-                      <div className="mt-2 h-1.5 rounded-full bg-white/10">
-                        <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-teal-400 transition-all duration-200" style={{ width: (f.progress || 0) + '%' }} />
+                      <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-teal-400 transition-all duration-150"
+                          style={{ width: (f.progress || 0) + '%' }}
+                        />
                       </div>
                     )}
                   </div>
                   <div className="flex-shrink-0">
                     {f.status === 'ready'     && <span className="text-xs text-gray-500">Ready</span>}
-                    {f.status === 'uploading' && <span className="text-xs text-cyan-400">{f.progress || 0}%</span>}
+                    {f.status === 'uploading' && <span className="text-xs text-cyan-400 tabular-nums">{f.progress || 0}%</span>}
                     {f.status === 'done'      && <CheckCircle size={18} className="text-emerald-400" />}
                     {f.status === 'error'     && <XCircle    size={18} className="text-rose-400" />}
                   </div>
-                  <button onClick={() => removeFile(f.id)}
-                    className="flex-shrink-0 w-7 h-7 rounded-lg glass flex items-center justify-center text-gray-500 hover:text-rose-400 transition-colors">
-                    <X size={14} />
-                  </button>
+                  {f.status !== 'uploading' && (
+                    <button onClick={() => removeFile(f.id)}
+                      className="flex-shrink-0 w-7 h-7 rounded-lg glass flex items-center justify-center text-gray-500 hover:text-rose-400 transition-colors">
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -302,7 +356,7 @@ export default function FileUpload({ onNavigateToChat }) {
                     ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-white hover:opacity-90 hover:scale-[1.01] active:scale-95'
                     : 'bg-white/5 text-gray-600 cursor-not-allowed')}>
                 {analyzing
-                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Parsing & analyzing…</>
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing…</>
                   : <><TrendingUp size={16} /> Analyze {validCount} file{validCount !== 1 ? 's' : ''} with AI</>}
               </button>
             </div>
@@ -321,7 +375,6 @@ export default function FileUpload({ onNavigateToChat }) {
                 {parsedDataset.rowCount.toLocaleString()} rows · {parsedDataset.columns.length} columns · {parsedDataset.type.toUpperCase()}
               </p>
             </div>
-            {/* Cloud save indicator */}
             <div className="flex items-center gap-1.5 text-xs">
               {user ? (
                 savedToCloud
@@ -357,7 +410,6 @@ export default function FileUpload({ onNavigateToChat }) {
             ))}
           </div>
 
-          {/* Column type pills */}
           <div className="px-6 pb-4">
             <p className="text-xs text-gray-500 mb-2">Columns detected:</p>
             <div className="flex flex-wrap gap-1.5">
@@ -389,7 +441,6 @@ export default function FileUpload({ onNavigateToChat }) {
         </div>
       )}
 
-      {/* Info note */}
       {files.length === 0 && (
         <div className="flex items-start gap-3 p-4 rounded-xl glass border border-amber-500/20">
           <AlertCircle size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
@@ -407,7 +458,7 @@ export default function FileUpload({ onNavigateToChat }) {
       {/* Preview Modal */}
       {previewOpen && parsedDataset && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPreviewOpen(false)}>
-          <div className="glass-card rounded-3xl border border-white/10 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-card rounded-3xl border border-white/10 w-full max-w-4xl max-h-[90vh] sm:max-h-[85vh] mx-4 sm:mx-0 flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
               <div>
                 <h3 className="font-bold text-white text-lg">{parsedDataset.name}</h3>
@@ -482,7 +533,6 @@ export default function FileUpload({ onNavigateToChat }) {
   )
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function isNumericCol(col, rows) {
   if (!rows?.length) return false
   const vals = rows.map((r) => parseFloat(r[col])).filter((v) => !isNaN(v))

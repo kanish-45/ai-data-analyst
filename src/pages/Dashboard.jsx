@@ -28,6 +28,14 @@ async function fetchOverview(token) {
   return res.json()
 }
 
+async function fetchNotifications(token) {
+  const res = await fetch(`${API_URL}/stats/notifications`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error('Failed')
+  return res.json()
+}
+
 const navItems = [
   { icon: Home,          label: 'Overview',    id: 'overview'  },
   { icon: BarChart3,     label: 'Charts',      id: 'charts'    },
@@ -75,41 +83,50 @@ function StatSkeleton() {
   )
 }
 
-// ── Notification system ───────────────────────────────────────────────────────
-function NotificationPanel({ onClose }) {
-  const notifications = [
-    { id: 1, title: 'Dataset analyzed',      desc: 'Your CSV file is ready to explore', time: '2 min ago',  read: false, icon: CheckCircle, color: 'text-emerald-400' },
-    { id: 2, title: 'AI Chat ready',         desc: 'Ollama model loaded successfully',  time: '10 min ago', read: false, icon: Brain,       color: 'text-violet-400'  },
-    { id: 3, title: 'Welcome to DataMind!',  desc: 'Start by uploading your first file', time: '1 day ago',  read: true,  icon: Bell,        color: 'text-cyan-400'    },
-  ]
+// Icon for each notification type
+function notifIconFor(type) {
+  if (type === 'dataset') return { icon: CheckCircle, color: 'text-emerald-400' }
+  if (type === 'chat')    return { icon: Brain,       color: 'text-violet-400'  }
+  if (type === 'welcome') return { icon: Bell,        color: 'text-cyan-400'    }
+  return { icon: Bell, color: 'text-cyan-400' }
+}
+
+// ── Notification panel ────────────────────────────────────────────────────────
+function NotificationPanel({ onClose, notifications, loading }) {
   return (
-    <div className="absolute right-0 top-12 z-50 w-80 glass-card border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute right-0 top-12 z-50 w-80 max-w-[calc(100vw-2rem)] glass-card border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
         <p className="text-sm font-semibold text-white">Notifications</p>
         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={14} /></button>
       </div>
       <div className="max-h-72 overflow-y-auto">
-        {notifications.map((n) => {
-          const Icon = n.icon
-          return (
-            <div key={n.id} className={'flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 transition-colors ' + (!n.read ? 'bg-white/2' : '')}>
-              <div className={'w-8 h-8 rounded-lg glass flex items-center justify-center flex-shrink-0 ' + n.color}>
-                <Icon size={14} />
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 size={18} className="text-gray-600 animate-spin" />
+          </div>
+        ) : notifications.length === 0 ? (
+          <div className="text-center py-8 px-4">
+            <Bell size={24} className="text-gray-700 mx-auto mb-2" />
+            <p className="text-xs text-gray-500">No notifications yet</p>
+            <p className="text-xs text-gray-700 mt-1">Upload a dataset to get started</p>
+          </div>
+        ) : (
+          notifications.map((n) => {
+            const { icon: Icon, color } = notifIconFor(n.type)
+            return (
+              <div key={n.id} className="flex items-start gap-3 px-4 py-3 border-b border-white/5 last:border-0 transition-colors">
+                <div className={'w-8 h-8 rounded-lg glass flex items-center justify-center flex-shrink-0 ' + color}>
+                  <Icon size={14} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-white">{n.title}</p>
+                  <p className="text-xs text-gray-600 mt-0.5 truncate">{n.desc}</p>
+                  <p className="text-xs text-gray-700 mt-1">{n.time}</p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className={'text-xs font-medium ' + (n.read ? 'text-gray-400' : 'text-white')}>{n.title}</p>
-                <p className="text-xs text-gray-600 mt-0.5 truncate">{n.desc}</p>
-                <p className="text-xs text-gray-700 mt-1">{n.time}</p>
-              </div>
-              {!n.read && <div className="w-2 h-2 rounded-full bg-cyan-400 flex-shrink-0 mt-1" />}
-            </div>
-          )
-        })}
-      </div>
-      <div className="px-4 py-2.5 border-t border-white/5">
-        <button className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors w-full text-center">
-          Mark all as read
-        </button>
+            )
+          })
+        )}
       </div>
     </div>
   )
@@ -130,6 +147,10 @@ function DashboardInner() {
   const [activity,       setActivity]       = useState([])
   const [statsLoading,   setStatsLoading]   = useState(false)
 
+  // Real notifications
+  const [notifications,  setNotifications]  = useState([])
+  const [notifsLoading,  setNotifsLoading]  = useState(false)
+
   const navigate     = (id) => { setActiveNav(id); setMobileOpen(false); setShowNotifs(false) }
   const pageTitle    = [...navItems, ...bottomNavItems].find((n) => n.id === activeNav)?.label || 'Overview'
   const pageSubtitle = subtitles[activeNav] || ''
@@ -138,6 +159,11 @@ function DashboardInner() {
   useEffect(() => {
     if (activeNav === 'overview' && user) loadStats()
   }, [activeNav, user])
+
+  // Load notifications once the user is known
+  useEffect(() => {
+    if (user) loadNotifications()
+  }, [user])
 
   const loadStats = async () => {
     const token = getToken()
@@ -152,6 +178,28 @@ function DashboardInner() {
     } finally {
       setStatsLoading(false)
     }
+  }
+
+  const loadNotifications = async () => {
+    const token = getToken()
+    if (!token) return
+    setNotifsLoading(true)
+    try {
+      const data = await fetchNotifications(token)
+      setNotifications(data.notifications || [])
+    } catch (err) {
+      console.error('Notifications error:', err)
+    } finally {
+      setNotifsLoading(false)
+    }
+  }
+
+  // Refresh notifications when opening the panel so they're up to date
+  const openNotifs = () => {
+    setShowNotifs((v) => {
+      if (!v) loadNotifications()
+      return !v
+    })
   }
 
   const overviewCards = [
@@ -177,7 +225,8 @@ function DashboardInner() {
     },
     {
       label:     'Chat Sessions',
-      value:     stats ? (stats.totalMessages > 0 ? Math.ceil(stats.totalMessages / 5).toString() : '0') : '—',
+      // Now uses the REAL session count from the backend
+      value:     stats ? (stats.totalSessions ?? 0).toString() : '—',
       change:    stats ? `${stats.recentChats} today` : 'Loading…',
       color:     'from-emerald-500/20 to-green-500/10',
       border:    'border-emerald-500/20',
@@ -197,7 +246,6 @@ function DashboardInner() {
     },
   ]
 
-  // Search navigation
   const searchResults = searchQuery.length > 1
     ? [...navItems, ...bottomNavItems].filter((n) =>
         n.label.toLowerCase().includes(searchQuery.toLowerCase())
@@ -207,19 +255,18 @@ function DashboardInner() {
   const renderContent = () => {
     if (activeNav === 'chat')      return <ChatUI onNavigateToUpload={() => navigate('upload')} />
     if (activeNav === 'upload')    return <FileUpload onNavigateToChat={() => navigate('chat')} />
-    if (activeNav === 'charts')    return <ChartsSection />
-    if (activeNav === 'analytics') return <AnalyticsSection />
-    if (activeNav === 'reports')   return <ReportsSection />
+    if (activeNav === 'charts')    return <ChartsSection  onNavigateToUpload={() => navigate('upload')} />
+    if (activeNav === 'analytics') return <AnalyticsSection onNavigate={navigate} />
+    if (activeNav === 'reports')   return <ReportsSection onNavigateToUpload={() => navigate('upload')} />
     if (activeNav === 'datasets')  return <DatasetsSection onNavigate={navigate} />
     if (activeNav === 'settings')  return <SettingsSection />
     if (activeNav === 'profile')   return <ProfileSection onNavigate={navigate} />
 
-    // ── Overview ──────────────────────────────────────────────────────────
     return (
       <>
         {/* Welcome banner */}
-        <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-cyan-500/10 via-violet-500/5 to-transparent border border-cyan-500/15 flex items-center justify-between gap-4">
-          <div>
+        <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-cyan-500/10 via-violet-500/5 to-transparent border border-cyan-500/15 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0">
             <p className="text-white font-semibold">Welcome back, {displayName}! 👋</p>
             <p className="text-gray-400 text-xs mt-0.5">
               {stats
@@ -228,7 +275,7 @@ function DashboardInner() {
             </p>
           </div>
           <button onClick={() => navigate('upload')}
-            className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/25 text-cyan-400 text-xs font-semibold hover:bg-cyan-500/25 transition-all">
+            className="flex-shrink-0 self-start sm:self-auto flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/25 text-cyan-400 text-xs font-semibold hover:bg-cyan-500/25 transition-all">
             <Upload size={13} /> Upload Data
           </button>
         </div>
@@ -342,6 +389,9 @@ function DashboardInner() {
     )
   }
 
+  // Unread dot: show only if we actually have any notifications
+  const hasNotifications = notifications.length > 0
+
   return (
     <div className="min-h-screen bg-[#0a0f1e] text-white flex overflow-hidden">
       {mobileOpen && <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={() => setMobileOpen(false)} />}
@@ -371,9 +421,12 @@ function DashboardInner() {
             className="hidden lg:flex w-6 h-6 rounded-md glass items-center justify-center text-gray-400 hover:text-white transition-colors">
             {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
+          <button onClick={() => setMobileOpen(false)}
+            className="lg:hidden w-7 h-7 rounded-md glass flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+            <X size={15} />
+          </button>
         </div>
 
-        {/* Main nav */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const Icon     = item.icon
@@ -391,7 +444,6 @@ function DashboardInner() {
           })}
         </nav>
 
-        {/* Bottom nav */}
         <div className="px-3 py-4 border-t border-white/5 space-y-1">
           {bottomNavItems.map((item) => {
             const Icon     = item.icon
@@ -416,7 +468,7 @@ function DashboardInner() {
       </aside>
 
       {/* ── Main ── */}
-      <div className={'flex-1 flex flex-col min-h-screen transition-all duration-300 ' + (collapsed ? 'lg:ml-20' : 'lg:ml-64')}>
+      <div className={'flex-1 flex flex-col min-h-screen min-w-0 transition-all duration-300 ' + (collapsed ? 'lg:ml-20' : 'lg:ml-64')}>
 
         {/* Header */}
         <header className="h-16 border-b border-white/5 bg-[#080c18]/80 backdrop-blur-xl flex items-center px-4 sm:px-6 gap-3 sticky top-0 z-10">
@@ -424,49 +476,30 @@ function DashboardInner() {
             <Menu size={22} />
           </button>
 
-          {/* Search */}
-          <div className="flex-1 max-w-md relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-            <input
-              type="text"
-              placeholder="Search sections…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setShowSearch(true)}
-              onBlur={() => setTimeout(() => setShowSearch(false), 200)}
-              className="w-full bg-white/5 border border-white/8 rounded-xl pl-9 pr-4 py-2 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-cyan-500/40 transition-all duration-200"
-            />
-            {/* Search results dropdown */}
-            {showSearch && searchResults.length > 0 && (
-              <div className="absolute top-full mt-1 left-0 right-0 z-50 glass-card border border-white/10 rounded-xl overflow-hidden shadow-xl">
-                {searchResults.map((r) => {
-                  const Icon = r.icon
-                  return (
-                    <button key={r.id} onMouseDown={() => { navigate(r.id); setSearchQuery('') }}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition-colors text-left">
-                      <Icon size={15} className="text-cyan-400 flex-shrink-0" />
-                      <span className="text-sm text-gray-300">{r.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base sm:text-lg font-bold text-white truncate leading-tight">{pageTitle}</h1>
+            <p className="text-xs text-gray-500 truncate">{pageSubtitle}</p>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
             {/* Notifications */}
             <div className="relative">
-              <button onClick={() => setShowNotifs(!showNotifs)}
+              <button onClick={openNotifs}
                 className="relative w-9 h-9 rounded-xl glass flex items-center justify-center text-gray-400 hover:text-white transition-colors">
                 <Bell size={17} />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400" />
+                {hasNotifications && <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-cyan-400" />}
               </button>
-              {showNotifs && <NotificationPanel onClose={() => setShowNotifs(false)} />}
+              {showNotifs && (
+                <NotificationPanel
+                  onClose={() => setShowNotifs(false)}
+                  notifications={notifications}
+                  loading={notifsLoading}
+                />
+              )}
             </div>
 
             <div className="w-px h-6 bg-white/10 hidden sm:block" />
 
-            {/* Avatar */}
             <button onClick={() => navigate('profile')}
               className="flex items-center gap-2.5 cursor-pointer hover:opacity-80 transition-opacity">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
@@ -480,12 +513,8 @@ function DashboardInner() {
           </div>
         </header>
 
-        {/* Page content */}
         <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
-          <div className="mb-6">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white mb-1">{pageTitle}</h1>
-            <p className="text-gray-500 text-sm">{pageSubtitle}</p>
-          </div>
+          
           {renderContent()}
         </main>
       </div>
