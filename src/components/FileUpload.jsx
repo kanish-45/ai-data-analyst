@@ -157,25 +157,91 @@ export default function FileUpload({ onNavigateToChat }) {
     xlsxMissing: parsed.xlsxMissing || false,
   })
 
+  // ── Compute rich dataset profile for accurate AI context ──────────────────
   const computeStats = (dataset) => {
-    const rows = dataset.allRows || dataset.rows || []
+    const rows  = dataset.allRows || dataset.rows || []
+    const total = rows.length
     const stats = {}
+
     dataset.columns.forEach((col) => {
-      const vals = rows.map((r) => parseFloat(r[col])).filter((v) => !isNaN(v))
-      if (vals.length > rows.length * 0.4) {
-        const sum = vals.reduce((a, b) => a + b, 0)
+      const raw       = rows.map((r) => r?.[col])
+      const nonNull   = raw.filter((v) => v !== null && v !== undefined && v !== '')
+      const nullCount = total - nonNull.length
+
+      const numericVals = nonNull.map((v) => parseFloat(v)).filter((v) => !isNaN(v) && isFinite(v))
+      const isNumeric   = nonNull.length > 0 && numericVals.length / nonNull.length >= 0.4
+
+      if (isNumeric && numericVals.length > 0) {
+        const sorted = [...numericVals].sort((a, b) => a - b)
+        const n      = sorted.length
+        const sum    = sorted.reduce((a, b) => a + b, 0)
+        const mean   = sum / n
+        const median = n % 2 === 0
+          ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+          : sorted[Math.floor(n / 2)]
+
+        const variance = sorted.reduce((acc, v) => acc + (v - mean) ** 2, 0) / n
+        const stddev   = Math.sqrt(variance)
+
+        const q1 = sorted[Math.floor(n * 0.25)]
+        const q3 = sorted[Math.floor(n * 0.75)]
+
+        const min = sorted[0]
+        const max = sorted[n - 1]
+        const distribution = []
+        if (min !== max) {
+          const width = (max - min) / 10
+          const bins  = Array(10).fill(0)
+          for (const v of sorted) {
+            let idx = Math.floor((v - min) / width)
+            if (idx >= 10) idx = 9
+            bins[idx]++
+          }
+          for (let i = 0; i < 10; i++) {
+            distribution.push({
+              range: `${(min + i * width).toFixed(2)}–${(min + (i + 1) * width).toFixed(2)}`,
+              count: bins[i],
+            })
+          }
+        }
+
         stats[col] = {
-          min: Math.min(...vals),
-          max: Math.max(...vals),
-          avg: sum / vals.length,
-          count: vals.length,
-          type: 'numeric',
+          type:        'numeric',
+          count:       n,
+          nullCount,
+          uniqueCount: new Set(numericVals).size,
+          min,
+          max,
+          mean:   Number(mean.toFixed(4)),
+          median: Number(median.toFixed(4)),
+          stddev: Number(stddev.toFixed(4)),
+          q1, q3,
+          distribution,
         }
       } else {
-        const unique = [...new Set(rows.map((r) => String(r[col] || '')))].slice(0, 10)
-        stats[col] = { unique, type: 'categorical' }
+        const counts = {}
+        for (const v of nonNull) {
+          const key = String(v).trim()
+          if (!key) continue
+          counts[key] = (counts[key] || 0) + 1
+        }
+        const sorted    = Object.entries(counts).sort((a, b) => b[1] - a[1])
+        const topValues = sorted.slice(0, 10).map(([value, count]) => ({
+          value,
+          count,
+          pct: Number(((count / nonNull.length) * 100).toFixed(2)),
+        }))
+
+        stats[col] = {
+          type:        'categorical',
+          count:       nonNull.length,
+          nullCount,
+          uniqueCount: sorted.length,
+          topValues,
+        }
       }
     })
+
     return stats
   }
 
@@ -217,6 +283,8 @@ export default function FileUpload({ onNavigateToChat }) {
       }
 
       updateFile(fileRecord.id, { progress: 100, status: 'done', phase: 'done' })
+      if (!dataset.columnStats) dataset.columnStats = computeStats(dataset)
+      
       addDataset(dataset)
       setParsedDataset(dataset)
       setAnalyzed(true)

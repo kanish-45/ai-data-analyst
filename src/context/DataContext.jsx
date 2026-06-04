@@ -55,7 +55,6 @@ export async function parseCSV(text, onProgress) {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0)
   if (lines.length === 0) return { columns: [], rows: [], rowCount: 0 }
 
-  // Auto-detect delimiter
   const delimiters = [',', ';', '\t']
   const delimiter  = delimiters.reduce((best, d) =>
     lines[0].split(d).length > lines[0].split(best).length ? d : best, ',')
@@ -72,9 +71,7 @@ export async function parseCSV(text, onProgress) {
     return cols
   }
 
-  const headers = parseRow(lines[0]).map((h) => h.replace(/^"|"$/g, '').trim())
-
-  // Parse in chunks of 1,000 rows, yielding between chunks
+  const headers   = parseRow(lines[0]).map((h) => h.replace(/^"|"$/g, '').trim())
   const dataLines = lines.slice(1)
   const totalRows = dataLines.length
   const chunkSize = 1000
@@ -139,8 +136,6 @@ export async function parseJSON(text, onProgress) {
 }
 
 // ── Excel Parser ─────────────────────────────────────────────────────────────
-// xlsx parses internally as one operation — no granular progress is available.
-// We at least call onProgress once at start so the UI shows "Parsing Excel…"
 export async function parseExcel(arrayBuffer, onProgress) {
   try {
     onProgress?.(0, 1)
@@ -175,36 +170,37 @@ export async function parseExcel(arrayBuffer, onProgress) {
 export function buildDatasetContext(dataset) {
   if (!dataset) return ''
 
-  const sourceRows = dataset.allRows || dataset.rows
+  const stats      = dataset.columnStats || {}
+  
+  const hasProfile = Object.keys(stats).length > 0
 
-  const numericStats = dataset.columns
-    .map((col) => {
-      const vals = sourceRows
-        .map((r) => parseFloat(r[col]))
-        .filter((v) => !isNaN(v))
-      if (vals.length < sourceRows.length * 0.4) return null
-      const sum = vals.reduce((a, b) => a + b, 0)
-      const avg = sum / vals.length
-      const min = Math.min(...vals)
-      const max = Math.max(...vals)
-      return `  ${col}: min=${min.toFixed(2)}, max=${max.toFixed(2)}, avg=${avg.toFixed(2)}, count=${vals.length}`
-    })
-    .filter(Boolean)
+  const numericLines     = []
+  const categoricalLines = []
 
-  const categoricalStats = dataset.columns
-    .filter((col) => {
-      const vals = sourceRows.map((r) => parseFloat(r[col]))
-      return vals.filter((v) => isNaN(v)).length > sourceRows.length * 0.5
-    })
-    .slice(0, 4)
-    .map((col) => {
-      const unique = [...new Set(sourceRows.map((r) => String(r[col])))]
-        .filter(Boolean)
-        .slice(0, 5)
-      return `  ${col}: ${unique.join(', ')}${unique.length === 5 ? '…' : ''}`
-    })
+  for (const col of dataset.columns) {
+    const s = stats[col]
+    if (!s) continue
 
-  const sampleRows = dataset.rows
+    if (s.type === 'numeric') {
+      numericLines.push(
+        `  ${col}:\n` +
+        `    count=${s.count}, null=${s.nullCount}, unique=${s.uniqueCount}\n` +
+        `    min=${s.min}, max=${s.max}\n` +
+        `    mean=${s.mean}, median=${s.median}, stddev=${s.stddev}\n` +
+        `    q1=${s.q1}, q3=${s.q3}`
+      )
+    } else if (s.type === 'categorical') {
+      const top = (s.topValues || []).slice(0, 5)
+        .map((t) => `"${t.value}" (${t.count}, ${t.pct}%)`)
+        .join(', ')
+      categoricalLines.push(
+        `  ${col}: count=${s.count}, null=${s.nullCount}, unique=${s.uniqueCount}` +
+        (top ? `\n    top values: ${top}` : '')
+      )
+    }
+  }
+
+  const sampleRows = (dataset.rows || [])
     .slice(0, 5)
     .map((row, i) =>
       `  Row ${i + 1}: ` +
@@ -219,14 +215,15 @@ File      : ${dataset.name}
 Format    : ${dataset.type?.toUpperCase()}
 Total rows: ${dataset.rowCount.toLocaleString()}
 Columns   : ${dataset.columns.join(', ')} (${dataset.columns.length} total)
-${numericStats.length > 0 ? `\nNumeric column statistics:\n${numericStats.join('\n')}` : ''}
-${categoricalStats.length > 0 ? `\nCategorical columns (sample values):\n${categoricalStats.join('\n')}` : ''}
+${hasProfile ? '\n>>> The statistics below were computed over the ENTIRE dataset and are AUTHORITATIVE. Use these exact numbers in your answers — do not estimate or recompute. <<<' : ''}
+${numericLines.length > 0 ? `\nNumeric columns — full-dataset statistics:\n${numericLines.join('\n')}` : ''}
+${categoricalLines.length > 0 ? `\nCategorical columns — full-dataset statistics:\n${categoricalLines.join('\n')}` : ''}
 
-Sample data (first 5 rows):
+Sample data (first 5 rows for reference):
 ${sampleRows}
 ━━━━━━━━━━━━━━━━━━━━━━
 
-Use the above data to answer all user questions accurately and specifically.
-Reference actual column names and real values from the dataset in your answers.
-If asked for statistics, calculate from the data provided above.`
+Use the statistics block above as ground truth. When asked about averages, totals, counts, distributions, or top values, quote the exact numbers from the statistics block.
+If asked about a specific row's values, use the sample rows.
+Never invent values — only use what is provided above.`
 }
