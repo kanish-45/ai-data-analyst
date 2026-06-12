@@ -264,17 +264,22 @@ export default function FileUpload({ onNavigateToChat }) {
         try {
           const columnStats = computeStats(dataset)
           const sampleRows  = (dataset.allRows || dataset.rows || []).slice(0, 20)
-          await saveDatasetToAPI({
-            name:     dataset.name,
-            type:     dataset.type,
-            size:     dataset.size,
-            rawSize:  dataset.rawSize,
-            rowCount: dataset.rowCount,
-            columns:  dataset.columns,
+          const savedDataset = await saveDatasetToAPI({
+            name:        dataset.name,
+            type:        dataset.type,
+            size:        dataset.size,
+            rawSize:     dataset.rawSize,
+            rowCount:    dataset.rowCount,
+            columns:     dataset.columns,
             sampleRows,
+            allRows:     dataset.allRows,
             columnStats,
-            tags:     dataset.tags,
+            tags:        dataset.tags,
           })
+          // Prefer the backend's stats (might be Python-computed)
+          if (savedDataset?.columnStats) {
+            dataset.columnStats = savedDataset.columnStats
+          }
           setSavedToCloud(true)
         } catch (saveErr) {
           console.warn('Cloud save failed (dataset still available locally):', saveErr.message)

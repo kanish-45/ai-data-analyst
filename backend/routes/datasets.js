@@ -1,6 +1,7 @@
 const express = require('express')
 const Dataset = require('../models/Dataset')
 const auth    = require('../middleware/auth')
+const mlService = require('../services/mlService')
 
 const router = express.Router()
 
@@ -30,7 +31,7 @@ router.post('/', async (req, res) => {
   try {
     const {
       name, type, size, rawSize,
-      rowCount, columns, sampleRows,
+      rowCount, columns, sampleRows, allRows,
       columnStats, tags,
     } = req.body
 
@@ -38,23 +39,41 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'name, type, and columns are required.' })
     }
 
-    // Check if dataset with same name already exists for this user
+    // ── Authoritative stats: prefer Python ML service, fall back to JS ─────
+    let finalStats = columnStats || {}
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const pythonStats = await mlService.profileDataset(allRows)
+      if (pythonStats) {
+        finalStats = pythonStats
+        console.log(`[datasets] ✓ Python profile used for "${name}" (${allRows.length} rows)`)
+      } else {
+        console.log(`[datasets] ✗ Python unreachable, falling back to JS stats for "${name}"`)
+      }
+    }
+
+    // Store only a sample of rows in the DB (not the full data)
+    const storedSample = sampleRows && sampleRows.length > 0
+      ? sampleRows
+      : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
+
+    // Update if a dataset with this name already exists for this user
     const existing = await Dataset.findOne({ user: req.user._id, name })
     if (existing) {
-      // Update existing instead of creating duplicate
       existing.type        = type
       existing.size        = size        || '0 B'
       existing.rawSize     = rawSize     || 0
       existing.rowCount    = rowCount    || 0
       existing.columns     = columns     || []
-      existing.sampleRows  = sampleRows  || []
-      existing.columnStats = columnStats || {}
+      existing.sampleRows  = storedSample
+      existing.columnStats = finalStats
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
+      existing.markModified('columnStats')   // Mixed type — required
       await existing.save()
-      return res.json({ dataset: existing.toSummary(), updated: true })
+      return res.json({ dataset: existing.toFull(), updated: true })
     }
 
+    // Create new
     const dataset = await Dataset.create({
       user:        req.user._id,
       name,
@@ -63,15 +82,15 @@ router.post('/', async (req, res) => {
       rawSize:     rawSize     || 0,
       rowCount:    rowCount    || 0,
       columns:     columns     || [],
-      sampleRows:  sampleRows  || [],
-      columnStats: columnStats || {},
+      sampleRows:  storedSample,
+      columnStats: finalStats,
       tags:        tags        || [type.toUpperCase()],
       status:      'ready',
     })
 
-    res.status(201).json({ dataset: dataset.toSummary() })
+    res.status(201).json({ dataset: dataset.toFull() })
   } catch (err) {
-    console.error('Save dataset error:', err)
+    console.error('Create dataset error:', err)
     res.status(500).json({ message: 'Failed to save dataset.' })
   }
 })
