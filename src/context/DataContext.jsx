@@ -167,11 +167,12 @@ export async function parseExcel(arrayBuffer, onProgress) {
 }
 
 // ── Build AI context string from dataset ─────────────────────────────────────
+// Reads the stored profile (columnStats) and anomalies when available, so the
+// AI receives real statistics + outlier info computed over the full dataset.
 export function buildDatasetContext(dataset) {
   if (!dataset) return ''
 
   const stats      = dataset.columnStats || {}
-  
   const hasProfile = Object.keys(stats).length > 0
 
   const numericLines     = []
@@ -200,6 +201,34 @@ export function buildDatasetContext(dataset) {
     }
   }
 
+  // ── Anomalies section ──────────────────────────────────────────────────
+  // Format outlier detection (computed by the Python ML service via IQR)
+  // so the AI can answer outlier questions with real grounded numbers.
+  const anomaliesData = dataset.anomalies || {}
+  const anomalyCols   = anomaliesData.anomalies || {}
+  const hasAnomalies  = Object.keys(anomalyCols).length > 0
+
+  let anomalyBlock = ''
+  if (hasAnomalies) {
+    const lines = []
+    for (const [col, info] of Object.entries(anomalyCols)) {
+      const topList = (info.topOutliers || []).slice(0, 3)
+        .map((o) => `row ${o.rowIndex} (value=${o.value})`)
+        .join(', ')
+      lines.push(
+        `  ${col}:\n` +
+        `    ${info.outlierCount} outliers (${info.percentage}% of column)\n` +
+        `    normal range: [${info.lowerBound}, ${info.upperBound}]\n` +
+        `    most extreme: ${topList}`
+      )
+    }
+    anomalyBlock =
+      `\nAnomaly detection (IQR 1.5x method):\n` +
+      `  Total: ${anomaliesData.totalOutlierRows} rows flagged ` +
+      `(${anomaliesData.rowsAffectedPct}% of dataset) across ${Object.keys(anomalyCols).length} columns\n` +
+      lines.join('\n')
+  }
+
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
     .map((row, i) =>
@@ -218,12 +247,13 @@ Columns   : ${dataset.columns.join(', ')} (${dataset.columns.length} total)
 ${hasProfile ? '\n>>> The statistics below were computed over the ENTIRE dataset and are AUTHORITATIVE. Use these exact numbers in your answers — do not estimate or recompute. <<<' : ''}
 ${numericLines.length > 0 ? `\nNumeric columns — full-dataset statistics:\n${numericLines.join('\n')}` : ''}
 ${categoricalLines.length > 0 ? `\nCategorical columns — full-dataset statistics:\n${categoricalLines.join('\n')}` : ''}
+${anomalyBlock}
 
 Sample data (first 5 rows for reference):
 ${sampleRows}
 ━━━━━━━━━━━━━━━━━━━━━━
 
-Use the statistics block above as ground truth. When asked about averages, totals, counts, distributions, or top values, quote the exact numbers from the statistics block.
+Use the statistics and anomaly blocks above as ground truth. When asked about averages, totals, counts, distributions, top values, or outliers, quote the exact numbers from above.
 If asked about a specific row's values, use the sample rows.
 Never invent values — only use what is provided above.`
 }

@@ -280,6 +280,15 @@ export default function FileUpload({ onNavigateToChat }) {
           if (savedDataset?.columnStats) {
             dataset.columnStats = savedDataset.columnStats
           }
+          // Prefer the backend's stats (might be Python-computed)
+          if (savedDataset?.columnStats) {
+            dataset.columnStats = savedDataset.columnStats
+          }
+          // Also attach anomalies so the AI can see outliers
+          if (savedDataset?.anomalies) {
+            dataset.anomalies = savedDataset.anomalies
+          }
+          
           setSavedToCloud(true)
         } catch (saveErr) {
           console.warn('Cloud save failed (dataset still available locally):', saveErr.message)
