@@ -71,9 +71,42 @@ async function profileDataset(rows) {
     return null
   }
 }
+/**
+ * Send dataset rows to Python and get back anomaly/outlier detection
+ * results (per-column IQR-based outlier counts, bounds, and top extreme rows).
+ *
+ * Returns the anomalies dict, or null if the service is unreachable.
+ */
+async function detectAnomalies(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return null
+  }
 
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/anomalies`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+
+    if (!res.ok) {
+      console.warn(`[mlService] /anomalies returned ${res.status} ${res.statusText}`)
+      return null
+    }
+
+    return await res.json()
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.warn('[mlService] /anomalies timed out — falling back')
+    } else {
+      console.warn('[mlService] /anomalies failed:', err.message)
+    }
+    return null
+  }
+}
 module.exports = {
   ML_SERVICE_URL,
   isHealthy,
   profileDataset,
+  detectAnomalies,
 }

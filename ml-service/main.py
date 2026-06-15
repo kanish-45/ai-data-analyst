@@ -129,7 +129,82 @@ def profile_dataset(req: ProfileRequest):
         "columns":     list(df.columns),
         "stats":       stats,
     }
+# ── Anomaly detection ────────────────────────────────────────────────────────
+@app.post("/anomalies")
+def detect_anomalies(req: ProfileRequest):
+    """
+    Detect outliers in every numeric column using the IQR (interquartile
+    range) method:
+      • compute Q1 and Q3
+      • IQR = Q3 - Q1
+      • outliers fall outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR]
 
+    Returns per-column outlier count, percentage, bounds, and the
+    most extreme outlier rows (capped to 10 per column for response size).
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    anomalies: Dict[str, Any] = {}
+    total_outlier_rows = set()  # row indices flagged in any column
+
+    for col in df.columns:
+        series   = df[col]
+        non_null = series.dropna()
+        numeric  = pd.to_numeric(non_null, errors="coerce").dropna()
+
+        # Skip columns that aren't really numeric or are too small to evaluate
+        if len(numeric) < 10 or (len(numeric) / max(len(non_null), 1)) < 0.4:
+            continue
+
+        q1, q3 = numeric.quantile(0.25), numeric.quantile(0.75)
+        iqr    = q3 - q1
+        if iqr == 0:
+            continue  # constant column → no anomalies
+
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+
+        # Mask of outlier rows (preserves original index)
+        outlier_mask = (numeric < lower) | (numeric > upper)
+        outlier_idx  = numeric[outlier_mask].index.tolist()
+        outlier_vals = numeric[outlier_mask]
+
+        if len(outlier_idx) == 0:
+            continue
+
+        # Track all flagged row indices across columns
+        for i in outlier_idx:
+            total_outlier_rows.add(int(i))
+
+        # Top 10 most extreme outliers by distance from the median
+        median   = numeric.median()
+        extreme  = outlier_vals.reindex(
+            (outlier_vals - median).abs().sort_values(ascending=False).index
+        ).head(10)
+
+        anomalies[col] = {
+            "outlierCount": int(len(outlier_idx)),
+            "percentage":   round(float(len(outlier_idx) / len(numeric) * 100), 2),
+            "lowerBound":   round(float(lower), 4),
+            "upperBound":   round(float(upper), 4),
+            "median":       round(float(median), 4),
+            "topOutliers":  [
+                {"rowIndex": int(idx), "value": round(float(val), 4)}
+                for idx, val in extreme.items()
+            ],
+        }
+
+    return {
+        "method":              "IQR (1.5x)",
+        "anomalies":           anomalies,
+        "totalOutlierRows":    len(total_outlier_rows),
+        "totalRows":           len(df),
+        "rowsAffectedPct":     round(
+            float(len(total_outlier_rows) / max(len(df), 1) * 100), 2
+        ),
+    }
 
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":

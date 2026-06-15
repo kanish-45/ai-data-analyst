@@ -82,8 +82,8 @@ ChatSessionSchema.methods.toSummary = function () {
     title:        this.title,
     model:        this.model,
     datasetInfo:  this.datasetInfo,
-    messageCount: this.messages.length,
-    lastMessage:  this.messages.length > 0
+    messageCount: this.messages?.length || 0,
+    lastMessage:  (this.messages?.length || 0) > 0
       ? this.messages[this.messages.length - 1].text.slice(0, 80)
       : null,
     createdAt:    this.createdAt,
