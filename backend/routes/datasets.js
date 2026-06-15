@@ -4,8 +4,6 @@ const auth      = require('../middleware/auth')
 const mlService = require('../services/mlService')
 
 const router = express.Router()
-
-// All dataset routes require authentication
 router.use(auth)
 
 // ── GET /api/datasets ─────────────────────────────────────────────────────────
@@ -24,13 +22,6 @@ router.get('/', async (req, res) => {
 })
 
 // ── POST /api/datasets ────────────────────────────────────────────────────────
-// Save a new parsed dataset. Pipeline:
-//   1) Frontend sends raw rows
-//   2) Backend calls Python /profile      → statistical stats
-//   3) Backend calls Python /anomalies    → IQR outliers
-//   4) Backend calls Python /correlations → Pearson correlations
-//   5) Backend stores everything in MongoDB
-//   6) Returns full dataset (with all ML results) for AI context
 router.post('/', async (req, res) => {
   try {
     const {
@@ -43,7 +34,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'name, type, and columns are required.' })
     }
 
-    // ── 1. Profile ──────────────────────────────────────────────────────
     let finalStats = columnStats || {}
     if (Array.isArray(allRows) && allRows.length > 0) {
       const pythonStats = await mlService.profileDataset(allRows)
@@ -55,7 +45,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // ── 2. Anomalies ────────────────────────────────────────────────────
     let anomalies = null
     if (Array.isArray(allRows) && allRows.length > 0) {
       const result = await mlService.detectAnomalies(allRows)
@@ -65,7 +54,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // ── 3. Correlations ─────────────────────────────────────────────────
     let correlations = null
     if (Array.isArray(allRows) && allRows.length > 0) {
       const result = await mlService.computeCorrelations(allRows)
@@ -75,12 +63,19 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Store only a sample of rows (not the full data)
+    let quality = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.computeQuality(allRows)
+      if (result) {
+        quality = result
+        console.log(`[datasets] ✓ Quality score: ${result.score} (${result.grade})`)
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
 
-    // ── Update existing dataset if name matches, else create new ──────────
     const existing = await Dataset.findOne({ user: req.user._id, name })
     if (existing) {
       existing.type        = type
@@ -92,13 +87,14 @@ router.post('/', async (req, res) => {
       existing.columnStats = finalStats
       if (anomalies)    existing.anomalies    = anomalies
       if (correlations) existing.correlations = correlations
+      if (quality)      existing.quality      = quality
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
-      // Mixed-type fields require explicit modification flagging
       existing.markModified('columnStats')
       if (anomalies)    existing.markModified('anomalies')
       if (correlations) existing.markModified('correlations')
+      if (quality)      existing.markModified('quality')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -116,6 +112,7 @@ router.post('/', async (req, res) => {
       columnStats:  finalStats,
       anomalies:    anomalies    || {},
       correlations: correlations || {},
+      quality:      quality      || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

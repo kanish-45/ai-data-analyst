@@ -8,18 +8,19 @@ const DatasetSchema = new mongoose.Schema(
       required: true,
       index:    true,
     },
-    name:       { type: String, required: true, trim: true, maxlength: 200 },
-    type:       { type: String, enum: ['csv', 'json', 'xlsx', 'xls'], required: true },
-    size:       { type: String, default: '0 B' },
-    rawSize:    { type: Number, default: 0 },
-    rowCount:   { type: Number, default: 0 },
-    columns:    { type: [String], default: [] },
-    sampleRows: { type: [mongoose.Schema.Types.Mixed], default: [] },
-    columnStats:{ type: mongoose.Schema.Types.Mixed, default: {} },
-    anomalies:  { type: mongoose.Schema.Types.Mixed, default: {} },
+    name:        { type: String, required: true, trim: true, maxlength: 200 },
+    type:        { type: String, enum: ['csv', 'json', 'xlsx', 'xls'], required: true },
+    size:        { type: String, default: '0 B' },
+    rawSize:     { type: Number, default: 0 },
+    rowCount:    { type: Number, default: 0 },
+    columns:     { type: [String], default: [] },
+    sampleRows:  { type: [mongoose.Schema.Types.Mixed], default: [] },
+    columnStats: { type: mongoose.Schema.Types.Mixed, default: {} },
+    anomalies:   { type: mongoose.Schema.Types.Mixed, default: {} },
     correlations:{ type: mongoose.Schema.Types.Mixed, default: {} },
-    tags:       { type: [String], default: [] },
-    status:     { type: String, enum: ['ready', 'error'], default: 'ready' },
+    quality:     { type: mongoose.Schema.Types.Mixed, default: {} },
+    tags:        { type: [String], default: [] },
+    status:      { type: String, enum: ['ready', 'error'], default: 'ready' },
   },
   { timestamps: true }
 )
@@ -35,6 +36,7 @@ DatasetSchema.methods.toSummary = function () {
     columns:   this.columns,
     tags:      this.tags,
     status:    this.status,
+    quality:   this.quality,
     uploaded:  this.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
@@ -44,12 +46,13 @@ DatasetSchema.methods.toSummary = function () {
 DatasetSchema.methods.toFull = function () {
   return {
     ...this.toSummary(),
-    rows:        this.sampleRows,
-    allRows:     this.sampleRows,
-    columnStats: this.columnStats,
-    anomalies:   this.anomalies,
+    rows:         this.sampleRows,
+    allRows:      this.sampleRows,
+    columnStats:  this.columnStats,
+    anomalies:    this.anomalies,
     correlations: this.correlations,
+    quality:      this.quality,
   }
 }
 
-module.exports = mongoose.model('Dataset', DatasetSchema) 
+module.exports = mongoose.model('Dataset', DatasetSchema)

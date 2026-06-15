@@ -243,6 +243,18 @@ export function buildDatasetContext(dataset) {
       `\nCorrelations (Pearson method, computed over full dataset):\n` +
       lines.join('\n')
   }
+  // ── Quality score section ──────────────────────────────────────────────
+  const quality = dataset.quality || {}
+  let qualityBlock = ''
+  if (quality.score != null && quality.breakdown) {
+    const b = quality.breakdown
+    qualityBlock =
+      `\nData quality score: ${quality.score}/100 (${quality.grade || 'unknown'})\n` +
+      `  • Completeness: ${b.completeness?.score}/100 — ${b.completeness?.missing} missing of ${b.completeness?.totalCells} cells\n` +
+      `  • Uniqueness:   ${b.uniqueness?.score}/100 — ${b.uniqueness?.dominatedCols?.length || 0} dominated columns\n` +
+      `  • Consistency:  ${b.consistency?.score}/100 — ${b.consistency?.inconsistentCols?.length || 0} inconsistent numeric columns\n` +
+      `  • Outliers:     ${b.outliers?.score}/100 — ${b.outliers?.avgOutlierPct}% average outlier density`
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
@@ -264,6 +276,7 @@ ${numericLines.length > 0 ? `\nNumeric columns — full-dataset statistics:\n${n
 ${categoricalLines.length > 0 ? `\nCategorical columns — full-dataset statistics:\n${categoricalLines.join('\n')}` : ''}
 ${anomalyBlock}
 ${correlationBlock}
+${qualityBlock}
 
 Sample data (first 5 rows for reference):
 ${sampleRows}

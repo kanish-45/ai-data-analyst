@@ -293,6 +293,143 @@ def compute_correlations(req: ProfileRequest):
         "matrix":   matrix,
         "topPairs": pairs[:20],   # cap so response stays small
     }
+    # ── Data quality score ───────────────────────────────────────────────────────
+@app.post("/quality")
+def compute_quality(req: ProfileRequest):
+    """
+    Compute a 0–100 data quality score and breakdown.
+
+    Four sub-scores (each 0–100), then a weighted average:
+      • completeness (35%) — % of cells that are non-null
+      • uniqueness   (15%) — penalty for columns that are >95% one value (excluding likely IDs)
+      • consistency  (25%) — for numeric columns, what % of values actually parse as numbers
+      • outliers     (25%) — penalty for high outlier density across numeric columns
+
+    Each sub-score gets a short human-readable explanation so the UI and AI
+    can show why the dataset got the score it did.
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df    = pd.DataFrame(req.rows)
+    total = len(df)
+    if total == 0:
+        return {"score": 0, "breakdown": {}, "note": "Empty dataset"}
+
+    # ── 1. Completeness ────────────────────────────────────────────────
+    cell_count    = total * len(df.columns)
+    null_count    = int(df.isna().sum().sum())
+    empty_strings = int(df.apply(lambda s: (s == "").sum() if s.dtype == "object" else 0).sum())
+    missing       = null_count + empty_strings
+    completeness  = round(max(0, 100 * (1 - missing / max(cell_count, 1))), 1)
+
+    # ── 2. Uniqueness ──────────────────────────────────────────────────
+    # Flag columns where one value dominates >95% of rows (excluding likely IDs)
+    dominated_cols = []
+    for col in df.columns:
+        nn = df[col].dropna()
+        if len(nn) < 10: continue
+        top_freq = nn.value_counts(normalize=True).iloc[0] if len(nn) > 0 else 0
+        # Skip likely ID columns (everything unique → ratio = 1/n)
+        if nn.nunique() == len(nn): continue
+        if top_freq > 0.95:
+            dominated_cols.append({
+                "column":   col,
+                "topValue": str(nn.value_counts().index[0])[:50],
+                "share":    round(float(top_freq) * 100, 1),
+            })
+    uniqueness = round(max(0, 100 - len(dominated_cols) * 15), 1)
+
+    # ── 3. Consistency (numeric columns) ───────────────────────────────
+    numeric_columns_checked = 0
+    inconsistent_columns    = []
+    for col in df.columns:
+        nn = df[col].dropna()
+        if len(nn) < 10: continue
+        numeric = pd.to_numeric(nn, errors="coerce").dropna()
+        ratio   = len(numeric) / len(nn)
+        # If a column is "mostly numeric" (40-100%), check the % that actually parsed
+        if 0.4 <= ratio < 1.0:
+            numeric_columns_checked += 1
+            if ratio < 0.95:
+                inconsistent_columns.append({
+                    "column":      col,
+                    "validRatio":  round(float(ratio) * 100, 1),
+                })
+    consistency = (
+        round(max(0, 100 - len(inconsistent_columns) * 20), 1)
+        if numeric_columns_checked > 0
+        else 100.0
+    )
+
+    # ── 4. Outlier density (numeric columns, IQR method) ───────────────
+    outlier_columns   = []
+    total_outlier_pct = 0.0
+    numeric_evaluated = 0
+    for col in df.columns:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 10: continue
+        q1, q3 = numeric.quantile(0.25), numeric.quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0: continue
+        lo, hi   = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        outliers = numeric[(numeric < lo) | (numeric > hi)]
+        pct      = len(outliers) / len(numeric) * 100
+        numeric_evaluated += 1
+        total_outlier_pct += pct
+        if pct > 10:
+            outlier_columns.append({
+                "column":     col,
+                "outlierPct": round(float(pct), 1),
+            })
+    avg_outlier_pct = total_outlier_pct / max(numeric_evaluated, 1)
+    # Score: 100 if 0% outliers, 0 if 50%+ outliers (linear in between)
+    outlier_score = round(max(0, 100 - avg_outlier_pct * 2), 1)
+
+    # ── Weighted final score ───────────────────────────────────────────
+    score = round(
+        completeness * 0.35
+        + uniqueness  * 0.15
+        + consistency * 0.25
+        + outlier_score * 0.25,
+        1,
+    )
+
+    # Grade label
+    if   score >= 90: grade = "A — excellent"
+    elif score >= 75: grade = "B — good"
+    elif score >= 60: grade = "C — fair"
+    elif score >= 40: grade = "D — needs cleanup"
+    else:             grade = "F — poor"
+
+    return {
+        "score":     score,
+        "grade":     grade,
+        "breakdown": {
+            "completeness": {
+                "score":   completeness,
+                "weight":  35,
+                "missing": missing,
+                "totalCells": cell_count,
+            },
+            "uniqueness": {
+                "score":         uniqueness,
+                "weight":        15,
+                "dominatedCols": dominated_cols,
+            },
+            "consistency": {
+                "score":              consistency,
+                "weight":             25,
+                "inconsistentCols":   inconsistent_columns,
+            },
+            "outliers": {
+                "score":            outlier_score,
+                "weight":           25,
+                "avgOutlierPct":    round(avg_outlier_pct, 1),
+                "highOutlierCols":  outlier_columns,
+            },
+        },
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

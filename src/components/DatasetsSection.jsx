@@ -284,6 +284,24 @@ export default function DatasetsSection({ onNavigate }) {
                                 <div>
                                   <div className="font-medium text-white text-sm flex items-center gap-2">
                                     {d.name}
+                                    {d.quality?.score != null && (
+                                      <span
+                                        title={`Data quality: ${d.quality.grade || ''}`}
+                                        className={
+                                          'text-[10px] font-bold px-1.5 py-0.5 rounded-md tabular-nums ' +
+                                          (d.quality.score >= 90 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' :
+                                           d.quality.score >= 75 ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30' :
+                                           d.quality.score >= 60 ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30' :
+                                           d.quality.score >= 40 ? 'bg-orange-500/15 text-orange-400 border border-orange-500/30' :
+                                                                   'bg-rose-500/15 text-rose-400 border border-rose-500/30')
+                                        }
+                                      >
+                                        {d.quality.score >= 90 ? 'A' :
+                                         d.quality.score >= 75 ? 'B' :
+                                         d.quality.score >= 60 ? 'C' :
+                                         d.quality.score >= 40 ? 'D' : 'F'} · {Math.round(d.quality.score)}
+                                      </span>
+                                    )}
                                     {isActive && <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">In Chat</span>}
                                     {(d.id || d._id) && source === 'cloud' && <Cloud size={10} className="text-gray-600" />}
                                   </div>
