@@ -228,6 +228,21 @@ export function buildDatasetContext(dataset) {
       `(${anomaliesData.rowsAffectedPct}% of dataset) across ${Object.keys(anomalyCols).length} columns\n` +
       lines.join('\n')
   }
+  // ── Correlations section ───────────────────────────────────────────────
+  const corr        = dataset.correlations || {}
+  const corrPairs   = corr.topPairs || []
+  const hasCorr     = corrPairs.length > 0
+
+  let correlationBlock = ''
+  if (hasCorr) {
+    const lines = corrPairs.slice(0, 10).map((p) => {
+      const sign = p.correlation > 0 ? '+' : ''
+      return `  ${p.col1} ↔ ${p.col2}: ${sign}${p.correlation} (${p.strength} ${p.direction})`
+    })
+    correlationBlock =
+      `\nCorrelations (Pearson method, computed over full dataset):\n` +
+      lines.join('\n')
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
@@ -248,6 +263,7 @@ ${hasProfile ? '\n>>> The statistics below were computed over the ENTIRE dataset
 ${numericLines.length > 0 ? `\nNumeric columns — full-dataset statistics:\n${numericLines.join('\n')}` : ''}
 ${categoricalLines.length > 0 ? `\nCategorical columns — full-dataset statistics:\n${categoricalLines.join('\n')}` : ''}
 ${anomalyBlock}
+${correlationBlock}
 
 Sample data (first 5 rows for reference):
 ${sampleRows}

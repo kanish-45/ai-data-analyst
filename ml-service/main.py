@@ -205,7 +205,94 @@ def detect_anomalies(req: ProfileRequest):
             float(len(total_outlier_rows) / max(len(df), 1) * 100), 2
         ),
     }
+# ── Correlation analysis ─────────────────────────────────────────────────────
+@app.post("/correlations")
+def compute_correlations(req: ProfileRequest):
+    """
+    Compute pairwise Pearson correlation between every numeric column.
 
+    Returns:
+      • columns: list of numeric column names included
+      • matrix:  full NxN correlation matrix (for heatmap display)
+      • topPairs: ranked list of strongest correlations (for AI to mention)
+
+    Strength buckets (standard data-science thresholds):
+      |r| < 0.1  → negligible (filtered out)
+      0.1–0.3    → weak
+      0.3–0.5    → moderate
+      0.5–0.7    → strong
+      ≥ 0.7      → very strong
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+
+    # Convert all columns to numeric where possible; non-numeric → NaN → dropped
+    numeric_df = df.apply(pd.to_numeric, errors="coerce")
+
+    # Keep only columns where at least 40% of values are numeric AND there's variance
+    valid_cols = []
+    for col in numeric_df.columns:
+        non_null = numeric_df[col].dropna()
+        ratio    = len(non_null) / max(len(df), 1)
+        if ratio >= 0.4 and len(non_null) >= 10 and non_null.std() > 0:
+            valid_cols.append(col)
+
+    if len(valid_cols) < 2:
+        return {
+            "method":   "Pearson",
+            "columns":  valid_cols,
+            "matrix":   [],
+            "topPairs": [],
+            "note":     "Need at least 2 numeric columns with variance to compute correlations",
+        }
+
+    # Compute the correlation matrix (pandas handles NaN gracefully)
+    corr = numeric_df[valid_cols].corr(method="pearson")
+
+    # Convert to a plain 2D list (rounded)
+    matrix = [[round(float(corr.iat[i, j]), 4) for j in range(len(valid_cols))]
+              for i in range(len(valid_cols))]
+
+    # Build a flat list of pairs (upper triangle only — corr is symmetric)
+    pairs = []
+    for i in range(len(valid_cols)):
+        for j in range(i + 1, len(valid_cols)):
+            r = float(corr.iat[i, j])
+            if pd.isna(r):
+                continue
+            abs_r = abs(r)
+            if abs_r < 0.1:
+                continue  # negligible — skip
+
+            if abs_r >= 0.7:
+                strength = "very strong"
+            elif abs_r >= 0.5:
+                strength = "strong"
+            elif abs_r >= 0.3:
+                strength = "moderate"
+            else:
+                strength = "weak"
+
+            pairs.append({
+                "col1":        valid_cols[i],
+                "col2":        valid_cols[j],
+                "correlation": round(r, 4),
+                "absCorr":     round(abs_r, 4),
+                "direction":   "positive" if r > 0 else "negative",
+                "strength":    strength,
+            })
+
+    # Rank strongest first
+    pairs.sort(key=lambda p: p["absCorr"], reverse=True)
+
+    return {
+        "method":   "Pearson",
+        "columns":  valid_cols,
+        "matrix":   matrix,
+        "topPairs": pairs[:20],   # cap so response stays small
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies')
+      .select('-sampleRows -columnStats -anomalies -correlations')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -24,6 +24,13 @@ router.get('/', async (req, res) => {
 })
 
 // ── POST /api/datasets ────────────────────────────────────────────────────────
+// Save a new parsed dataset. Pipeline:
+//   1) Frontend sends raw rows
+//   2) Backend calls Python /profile      → statistical stats
+//   3) Backend calls Python /anomalies    → IQR outliers
+//   4) Backend calls Python /correlations → Pearson correlations
+//   5) Backend stores everything in MongoDB
+//   6) Returns full dataset (with all ML results) for AI context
 router.post('/', async (req, res) => {
   try {
     const {
@@ -36,6 +43,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'name, type, and columns are required.' })
     }
 
+    // ── 1. Profile ──────────────────────────────────────────────────────
     let finalStats = columnStats || {}
     if (Array.isArray(allRows) && allRows.length > 0) {
       const pythonStats = await mlService.profileDataset(allRows)
@@ -47,6 +55,7 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // ── 2. Anomalies ────────────────────────────────────────────────────
     let anomalies = null
     if (Array.isArray(allRows) && allRows.length > 0) {
       const result = await mlService.detectAnomalies(allRows)
@@ -56,10 +65,22 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // ── 3. Correlations ─────────────────────────────────────────────────
+    let correlations = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.computeCorrelations(allRows)
+      if (result) {
+        correlations = result
+        console.log(`[datasets] ✓ Correlations: ${result.topPairs?.length || 0} pair(s) found across ${result.columns?.length || 0} numeric columns`)
+      }
+    }
+
+    // Store only a sample of rows (not the full data)
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
 
+    // ── Update existing dataset if name matches, else create new ──────────
     const existing = await Dataset.findOne({ user: req.user._id, name })
     if (existing) {
       existing.type        = type
@@ -69,28 +90,34 @@ router.post('/', async (req, res) => {
       existing.columns     = columns     || []
       existing.sampleRows  = storedSample
       existing.columnStats = finalStats
-      if (anomalies) existing.anomalies = anomalies
+      if (anomalies)    existing.anomalies    = anomalies
+      if (correlations) existing.correlations = correlations
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
+
+      // Mixed-type fields require explicit modification flagging
       existing.markModified('columnStats')
-      if (anomalies) existing.markModified('anomalies')
+      if (anomalies)    existing.markModified('anomalies')
+      if (correlations) existing.markModified('correlations')
+
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
     }
 
     const dataset = await Dataset.create({
-      user:        req.user._id,
+      user:         req.user._id,
       name,
       type,
-      size:        size        || '0 B',
-      rawSize:     rawSize     || 0,
-      rowCount:    rowCount    || 0,
-      columns:     columns     || [],
-      sampleRows:  storedSample,
-      columnStats: finalStats,
-      anomalies:   anomalies || {},
-      tags:        tags        || [type.toUpperCase()],
-      status:      'ready',
+      size:         size        || '0 B',
+      rawSize:      rawSize     || 0,
+      rowCount:     rowCount    || 0,
+      columns:      columns     || [],
+      sampleRows:   storedSample,
+      columnStats:  finalStats,
+      anomalies:    anomalies    || {},
+      correlations: correlations || {},
+      tags:         tags || [type.toUpperCase()],
+      status:       'ready',
     })
 
     res.status(201).json({ dataset: dataset.toFull() })

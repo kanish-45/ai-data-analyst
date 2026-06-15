@@ -1,93 +1,218 @@
-import { TrendingUp, Brain, Construction, ArrowRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useData } from '../context/DataContext'
+import { TrendingUp, BarChart3, Info, Loader2 } from 'lucide-react'
 
-const PLANNED_FEATURES = [
-  {
-    title: 'Time-series trend analysis',
-    desc:  'Detect upward / downward trends, seasonality, and anomalies in date-stamped data.',
-    needs: 'A date or timestamp column',
-  },
-  {
-    title: 'Funnel & conversion analytics',
-    desc:  'Step-by-step funnel analysis across user-defined stages with drop-off rates.',
-    needs: 'Columns mapping users to event stages',
-  },
-  {
-    title: 'Cohort retention',
-    desc:  'Track how groups of users retain over time after a starting event.',
-    needs: 'User identifiers + timestamps spanning multiple periods',
-  },
-  {
-    title: 'Correlation explorer',
-    desc:  'Automatically surface the strongest relationships between numeric columns.',
-    needs: 'Multiple numeric columns',
-  },
-  {
-    title: 'Segment comparison',
-    desc:  'Compare metrics across categorical segments with statistical significance.',
-    needs: 'A categorical column + at least one numeric column',
-  },
-]
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
-export default function AnalyticsSection({ onNavigate }) {
+// ── Color helpers ────────────────────────────────────────────────────────────
+function corrColor(r) {
+  const abs   = Math.min(Math.abs(r), 1)
+  const alpha = 0.15 + abs * 0.65
+  if (r > 0)  return `rgba(34, 211, 238, ${alpha})`
+  if (r < 0)  return `rgba(244, 114, 182, ${alpha})`
+  return 'rgba(255,255,255,0.05)'
+}
+
+// ── Auth helper ──────────────────────────────────────────────────────────────
+function getToken() {
   return (
-    <div className="space-y-6">
+    localStorage.getItem('datamind_token') ||
+    localStorage.getItem('token') ||
+    localStorage.getItem('authToken') ||
+    null
+  )
+}
 
-      {/* Header card */}
-      <div className="glass-card rounded-2xl border border-white/5 p-8 text-center">
-        <div className="inline-flex w-16 h-16 rounded-2xl bg-violet-500/10 border border-violet-500/20 items-center justify-center mb-4">
-          <Construction size={28} className="text-violet-400" />
+export default function AnalyticsSection() {
+  const { activeDataset, loadIntoChat } = useData()
+  const [loading, setLoading]           = useState(false)
+  const [attempted, setAttempted]       = useState(false)
+
+  // ── Auto-load most recent dataset if none is active ─────────────────────
+  useEffect(() => {
+    if (activeDataset || attempted) return
+    const token = getToken()
+    if (!token) return
+
+    setAttempted(true)
+    setLoading(true)
+
+    ;(async () => {
+      try {
+        // 1. Get the dataset list (summary)
+        const listRes = await fetch(`${API_BASE}/datasets`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!listRes.ok) return
+        const { datasets } = await listRes.json()
+        if (!datasets?.length) return
+
+        // 2. Fetch the most recent one in full (includes correlations)
+        const recent = datasets[0]
+        const fullRes = await fetch(`${API_BASE}/datasets/${recent.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!fullRes.ok) return
+        const { dataset } = await fullRes.json()
+        if (dataset) loadIntoChat(dataset)
+      } catch (err) {
+        console.warn('[Analytics] auto-load failed:', err.message)
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [activeDataset, attempted, loadIntoChat])
+
+  // ── Loading state ──────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">Analytics</h1>
+          <p className="text-gray-400 text-sm">Statistical relationships and patterns across your data.</p>
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Advanced Analytics — Coming Soon</h2>
-        <p className="text-sm text-gray-400 max-w-xl mx-auto">
-          Generic CSV data can be analyzed in many ways, but features like funnels, cohorts, and time-series
-          trends need columns of specific shapes. The Analytics module is being designed to detect those shapes
-          automatically and offer the right analyses for each dataset.
-        </p>
-
-        <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-          <button onClick={() => onNavigate?.('charts')}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 text-white text-sm font-semibold hover:opacity-90 transition-all">
-            <TrendingUp size={14} /> Explore Charts
-          </button>
-          <button onClick={() => onNavigate?.('chat')}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl glass border border-white/10 text-gray-300 hover:text-white hover:border-white/20 text-sm font-semibold transition-all">
-            <Brain size={14} /> Ask AI directly
-          </button>
+        <div className="glass-card rounded-2xl border border-white/5 p-12 text-center">
+          <Loader2 size={28} className="text-cyan-400 animate-spin mx-auto mb-4" />
+          <p className="text-gray-400 text-sm">Loading your most recent dataset…</p>
         </div>
       </div>
+    )
+  }
 
-      {/* Planned features list */}
+  // ── Empty state (no dataset at all) ────────────────────────────────────
+  if (!activeDataset) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">Analytics</h1>
+          <p className="text-gray-400 text-sm">Statistical relationships and patterns across your data.</p>
+        </div>
+        <div className="glass-card rounded-2xl border border-white/5 p-12 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-white/5 mx-auto mb-4 flex items-center justify-center">
+            <BarChart3 size={28} className="text-gray-500" />
+          </div>
+          <p className="text-white font-semibold mb-2">No dataset loaded</p>
+          <p className="text-gray-500 text-sm">Upload a dataset to see correlation analysis.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const corr      = activeDataset.correlations || {}
+  const columns   = corr.columns  || []
+  const matrix    = corr.matrix   || []
+  const topPairs  = corr.topPairs || []
+  const hasMatrix = columns.length >= 2 && matrix.length > 0
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
       <div>
-        <h3 className="text-white font-bold text-lg mb-4">What's planned</h3>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {PLANNED_FEATURES.map((f, i) => (
-            <div key={i} className="glass-card rounded-2xl border border-white/5 p-5">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-xl bg-violet-500/8 border border-violet-500/15 flex items-center justify-center flex-shrink-0">
-                  <ArrowRight size={15} className="text-violet-400" />
-                </div>
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">Analytics</h1>
+        <p className="text-gray-400 text-sm">
+          Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
+        </p>
+      </div>
+
+      {/* Strongest correlations card */}
+      <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center">
+            <TrendingUp size={18} className="text-cyan-400" />
+          </div>
+          <div>
+            <h2 className="text-white font-bold">Strongest correlations</h2>
+            <p className="text-xs text-gray-500">Pairwise Pearson correlation, ranked by absolute strength</p>
+          </div>
+        </div>
+
+        {topPairs.length === 0 ? (
+          <div className="px-6 py-8 text-center text-gray-500 text-sm">
+            {columns.length < 2
+              ? `This dataset has only ${columns.length} numeric column${columns.length === 1 ? '' : 's'} — at least 2 are needed.`
+              : 'No meaningful correlations found (all pairs are below the 0.10 threshold).'}
+          </div>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {topPairs.slice(0, 10).map((p, i) => (
+              <div key={i} className="px-6 py-3 flex items-center gap-4">
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-semibold text-white">{f.title}</h4>
-                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">{f.desc}</p>
-                  <p className="text-xs text-gray-600 mt-2">
-                    <span className="text-gray-500 font-medium">Requires:</span> {f.needs}
+                  <p className="text-sm text-white">
+                    <span className="font-mono">{p.col1}</span>
+                    <span className="text-gray-500"> ↔ </span>
+                    <span className="font-mono">{p.col2}</span>
                   </p>
+                  <p className="text-xs text-gray-500 mt-0.5">{p.strength} {p.direction}</p>
+                </div>
+                <div
+                  className="px-3 py-1.5 rounded-lg font-mono text-sm font-semibold tabular-nums"
+                  style={{ backgroundColor: corrColor(p.correlation), color: '#fff' }}
+                >
+                  {p.correlation > 0 ? '+' : ''}{p.correlation.toFixed(3)}
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Closing note */}
-      <div className="rounded-2xl bg-cyan-500/5 border border-cyan-500/15 p-5 text-center">
-        <p className="text-sm text-gray-300">
-          In the meantime, the <strong className="text-cyan-400">AI Chat</strong> can answer most analytical
-          questions about your data right now — averages, trends, comparisons, summaries — by simply asking in
-          plain English.
+      {/* Correlation matrix heatmap */}
+      {hasMatrix && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+              <BarChart3 size={18} className="text-purple-400" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold">Correlation matrix</h2>
+              <p className="text-xs text-gray-500">Cyan = positive, pink = negative, intensity = strength</p>
+            </div>
+          </div>
+          <div className="p-6 overflow-x-auto">
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th></th>
+                  {columns.map((c) => (
+                    <th key={c} className="px-3 py-2 text-xs text-gray-400 font-mono whitespace-nowrap">{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {columns.map((rowCol, i) => (
+                  <tr key={rowCol}>
+                    <th className="px-3 py-2 text-xs text-gray-400 font-mono text-right whitespace-nowrap">{rowCol}</th>
+                    {columns.map((_, j) => {
+                      const r = matrix[i]?.[j] ?? 0
+                      const isDiag = i === j
+                      return (
+                        <td
+                          key={j}
+                          className="border border-white/5 text-center text-xs font-mono font-semibold text-white"
+                          style={{
+                            backgroundColor: isDiag ? 'rgba(255,255,255,0.08)' : corrColor(r),
+                            minWidth: 64,
+                            height: 44,
+                          }}
+                        >
+                          {isDiag ? '—' : (r > 0 ? '+' : '') + r.toFixed(2)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-white/3 border border-white/5">
+        <Info size={16} className="text-gray-500 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-gray-500 leading-relaxed">
+          Correlation measures how two columns move together. Values range from −1 (perfect inverse) to +1 (perfect alignment).
+          Near 0 means no linear relationship. Computed via Python pandas (Pearson method) over your full dataset.
         </p>
       </div>
-
     </div>
   )
 }

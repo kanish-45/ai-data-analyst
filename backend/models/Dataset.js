@@ -17,6 +17,7 @@ const DatasetSchema = new mongoose.Schema(
     sampleRows: { type: [mongoose.Schema.Types.Mixed], default: [] },
     columnStats:{ type: mongoose.Schema.Types.Mixed, default: {} },
     anomalies:  { type: mongoose.Schema.Types.Mixed, default: {} },
+    correlations:{ type: mongoose.Schema.Types.Mixed, default: {} },
     tags:       { type: [String], default: [] },
     status:     { type: String, enum: ['ready', 'error'], default: 'ready' },
   },
@@ -47,6 +48,7 @@ DatasetSchema.methods.toFull = function () {
     allRows:     this.sampleRows,
     columnStats: this.columnStats,
     anomalies:   this.anomalies,
+    correlations: this.correlations,
   }
 }
 

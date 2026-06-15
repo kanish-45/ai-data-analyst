@@ -38,10 +38,7 @@ async function isHealthy() {
 
 /**
  * Send dataset rows to the Python service and get back a rich
- * statistical profile (per-column type, count, mean, median, etc.).
- *
- * Returns the stats dict, or null if the service is unreachable —
- * the caller is responsible for falling back to a JS profiler if so.
+ * statistical profile.
  */
 async function profileDataset(rows) {
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -71,11 +68,10 @@ async function profileDataset(rows) {
     return null
   }
 }
+
 /**
  * Send dataset rows to Python and get back anomaly/outlier detection
- * results (per-column IQR-based outlier counts, bounds, and top extreme rows).
- *
- * Returns the anomalies dict, or null if the service is unreachable.
+ * results (IQR-based per numeric column).
  */
 async function detectAnomalies(rows) {
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -104,9 +100,43 @@ async function detectAnomalies(rows) {
     return null
   }
 }
+
+/**
+ * Send dataset rows to Python and get back pairwise Pearson correlations
+ * for every pair of numeric columns (returns matrix + ranked top pairs).
+ */
+async function computeCorrelations(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return null
+  }
+
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/correlations`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+
+    if (!res.ok) {
+      console.warn(`[mlService] /correlations returned ${res.status} ${res.statusText}`)
+      return null
+    }
+
+    return await res.json()
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.warn('[mlService] /correlations timed out — falling back')
+    } else {
+      console.warn('[mlService] /correlations failed:', err.message)
+    }
+    return null
+  }
+}
+
 module.exports = {
   ML_SERVICE_URL,
   isHealthy,
   profileDataset,
   detectAnomalies,
+  computeCorrelations,
 }
