@@ -325,14 +325,36 @@ export default function ChatUI({ onNavigateToUpload }) {
   const { activeDataset, clearActiveDataset } = useData()
   const { user }                              = useAuth()
 
-  const makeWelcome = (dataset) => ({
-    id:   Date.now(),
-    role: 'assistant',
-    text: dataset
-      ? `Hello! I've loaded **${dataset.name}** — ${dataset.rowCount.toLocaleString()} rows across ${dataset.columns.length} columns. Ask me anything about this data!`
-      : "Hello! I'm DataMind AI. Upload a dataset and ask me anything — trends, summaries, patterns, or detailed analysis.",
-    time: nowTime(),
-  })
+  const makeWelcome = (dataset) => {
+    if (!dataset) {
+      return {
+        id:   Date.now(),
+        role: 'assistant',
+        text: "Hello! I'm DataMind AI. Upload a dataset and ask me anything — trends, summaries, patterns, or detailed analysis.",
+        time: nowTime(),
+      }
+    }
+
+    const insightList = dataset.insights?.insights || []
+    const hasInsights = insightList.length > 0
+
+    let text = `Hello! I've loaded **${dataset.name}** — ${dataset.rowCount.toLocaleString()} rows across ${dataset.columns.length} columns.`
+
+    if (hasInsights) {
+      text += `\n\nHere's what I noticed in your data:\n\n`
+      text += insightList.map((ins, i) => `${i + 1}. **${ins.title}** — ${ins.description}`).join('\n')
+      text += `\n\nAsk me anything to dig deeper into any of these.`
+    } else {
+      text += ` Ask me anything about this data!`
+    }
+
+    return {
+      id:   Date.now(),
+      role: 'assistant',
+      text,
+      time: nowTime(),
+    }
+  }
 
   // ── State ────────────────────────────────────────────────────────────────────
   const [model,         setModel]         = useState(DEFAULT_MODEL)

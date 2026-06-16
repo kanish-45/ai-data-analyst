@@ -430,6 +430,312 @@ def compute_quality(req: ProfileRequest):
             },
         },
     }
+    # ── Smart insights generator ─────────────────────────────────────────────────
+@app.post("/insights")
+def generate_insights(req: ProfileRequest):
+    """
+    Generate 3–5 natural-language observations about the dataset.
+
+    Unlike the other endpoints which compute *one* specific ML output,
+    this one analyzes the dataset holistically and surfaces what's
+    *interesting* — high outlier concentration, strong correlations,
+    dominant categorical values, missing data, skew, etc.
+
+    Each insight has a type (for icon/color in UI), title, description,
+    and severity (info / notable / warning).
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df    = pd.DataFrame(req.rows)
+    total = len(df)
+    if total == 0:
+        return {"insights": []}
+
+    insights = []
+
+    # ── Classify columns once ──────────────────────────────────────────
+    numeric_cols, categorical_cols = [], []
+    for col in df.columns:
+        nn = df[col].dropna()
+        if len(nn) < 5: continue
+        numeric_vals = pd.to_numeric(nn, errors="coerce").dropna()
+        if len(numeric_vals) / max(len(nn), 1) >= 0.4:
+            numeric_cols.append(col)
+        else:
+            categorical_cols.append(col)
+
+    # ── 1. Summary insight (always shown) ──────────────────────────────
+    insights.append({
+        "type":        "summary",
+        "title":       "Dataset overview",
+        "description": (
+            f"{total:,} rows across {len(df.columns)} columns — "
+            f"{len(numeric_cols)} numeric, {len(categorical_cols)} categorical."
+        ),
+        "severity":    "info",
+    })
+
+    # ── 2. Missing data (if any) ───────────────────────────────────────
+    nulls   = int(df.isna().sum().sum())
+    empties = int(df.apply(lambda s: (s == "").sum() if s.dtype == "object" else 0).sum())
+    missing = nulls + empties
+    cells   = total * len(df.columns)
+    if missing > 0:
+        pct = round(missing / cells * 100, 1)
+        insights.append({
+            "type":        "missing",
+            "title":       f"{pct}% of cells are missing",
+            "description": (
+                f"{missing:,} of {cells:,} cells are blank or null. "
+                "Consider whether these represent intentional omissions or data-collection gaps."
+            ),
+            "severity":    "warning" if pct > 10 else "notable",
+        })
+    else:
+        insights.append({
+            "type":        "completeness",
+            "title":       "No missing data",
+            "description": f"All {cells:,} cells are filled — clean, complete data.",
+            "severity":    "info",
+        })
+
+    # ── 3. Outlier concentration (numeric IQR) ─────────────────────────
+    for col in numeric_cols:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 10: continue
+        q1, q3 = numeric.quantile(0.25), numeric.quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0: continue
+        lo, hi   = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        outliers = numeric[(numeric < lo) | (numeric > hi)]
+        pct      = round(len(outliers) / len(numeric) * 100, 1)
+        if pct >= 5:
+            insights.append({
+                "type":  "outlier",
+                "title": f"{pct}% of '{col}' values are outliers",
+                "description": (
+                    f"{len(outliers):,} rows in '{col}' fall outside the normal range "
+                    f"[{round(float(lo), 2)}, {round(float(hi), 2)}]. "
+                    f"Maximum value is {round(float(numeric.max()), 2)}, "
+                    f"compared to a median of {round(float(numeric.median()), 2)}."
+                ),
+                "severity": "warning" if pct >= 15 else "notable",
+            })
+            break  # only show the worst outlier insight
+
+    # ── 4. Strongest correlation ───────────────────────────────────────
+    if len(numeric_cols) >= 2:
+        corr = df[numeric_cols].apply(pd.to_numeric, errors="coerce").corr()
+        best_r, best_pair = 0, None
+        for i in range(len(numeric_cols)):
+            for j in range(i + 1, len(numeric_cols)):
+                r = corr.iat[i, j]
+                if pd.isna(r): continue
+                if abs(r) > abs(best_r):
+                    best_r    = r
+                    best_pair = (numeric_cols[i], numeric_cols[j])
+        if best_pair and abs(best_r) >= 0.3:
+            direction = "positively" if best_r > 0 else "negatively"
+            if   abs(best_r) >= 0.7: strength = "strongly"
+            elif abs(best_r) >= 0.5: strength = "moderately"
+            else:                    strength = "modestly"
+            insights.append({
+                "type":  "correlation",
+                "title": f"'{best_pair[0]}' and '{best_pair[1]}' are {strength} {direction} correlated",
+                "description": (
+                    f"Pearson correlation coefficient is {round(float(best_r), 3)}. "
+                    f"As one column changes, the other tends to "
+                    f"{'increase' if best_r > 0 else 'decrease'} accordingly."
+                ),
+                "severity": "notable",
+            })
+
+    # ── 5. Dominant categorical value ──────────────────────────────────
+    for col in categorical_cols:
+        nn = df[col].dropna()
+        nn = nn[nn != ""]
+        if len(nn) < 10: continue
+        top_count = nn.value_counts().iloc[0] if len(nn) > 0 else 0
+        top_value = str(nn.value_counts().index[0])[:50]
+        pct       = round(top_count / len(nn) * 100, 1)
+        if pct >= 50 and nn.nunique() > 1:
+            insights.append({
+                "type":  "dominant",
+                "title": f"'{col}' is dominated by one value",
+                "description": (
+                    f"{pct}% of rows in '{col}' have the value \"{top_value}\". "
+                    f"This column has {nn.nunique():,} unique values total, "
+                    f"but the data is heavily concentrated."
+                ),
+                "severity": "notable",
+            })
+            break  # only one dominant-value insight
+
+    # ── 6. Skewed numeric distribution ─────────────────────────────────
+    for col in numeric_cols:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 10: continue
+        mean   = float(numeric.mean())
+        median = float(numeric.median())
+        if median == 0: continue
+        ratio = mean / median
+        if ratio >= 3 or ratio <= 0.33:
+            skew_dir = "right-skewed" if ratio > 1 else "left-skewed"
+            insights.append({
+                "type":  "skew",
+                "title": f"'{col}' is heavily {skew_dir}",
+                "description": (
+                    f"Mean is {round(mean, 2)} but median is {round(median, 2)} — "
+                    f"a {round(abs(ratio - 1) * 100)}% difference. "
+                    f"A small number of {'large' if ratio > 1 else 'small'} values "
+                    f"are pulling the average."
+                ),
+                "severity": "notable",
+            })
+            break
+
+    # ── Return top 5, summary always first ─────────────────────────────
+    return {
+        "totalGenerated": len(insights),
+        "insights":       insights[:5],
+    }
+    # ── Time-series trend detection ──────────────────────────────────────────────
+@app.post("/trends")
+def detect_trends(req: ProfileRequest):
+    """
+    Detect time-series trends in the dataset.
+
+    1. Auto-detects a date column by trying to parse each column as a date.
+    2. For each numeric column, fits a linear trend over the sorted dates.
+    3. Returns slope, percent change, R-squared, and a plain-English summary.
+
+    If no date column is found, returns an empty result so the pipeline
+    can skip this analysis gracefully.
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    if len(df) < 5:
+        return {"hasDateColumn": False, "trends": []}
+
+    # ── 1. Auto-detect the date column ─────────────────────────────────
+    date_col, parsed_dates = None, None
+    for col in df.columns:
+        try:
+            dates = pd.to_datetime(df[col], errors="coerce")
+            valid_ratio = dates.notna().sum() / len(df)
+            if valid_ratio >= 0.8:    # 80%+ of values parse as dates
+                date_col      = col
+                parsed_dates  = dates
+                break
+        except Exception:
+            continue
+
+    if date_col is None:
+        return {
+            "hasDateColumn": False,
+            "trends":        [],
+            "note":          "No date column detected — trends require a column with parseable dates.",
+        }
+
+    # ── 2. Identify numeric columns (excluding the date) ───────────────
+    numeric_cols = []
+    for col in df.columns:
+        if col == date_col: continue
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) >= 5 and (len(numeric) / len(df)) >= 0.5:
+            numeric_cols.append(col)
+
+    if not numeric_cols:
+        return {
+            "hasDateColumn": True,
+            "dateColumn":    date_col,
+            "trends":        [],
+            "note":          "No numeric columns to analyze.",
+        }
+
+    # ── 3. Sort by date and compute trends for each numeric column ─────
+    df_sorted   = df.copy()
+    df_sorted["__date"] = parsed_dates
+    df_sorted   = df_sorted.dropna(subset=["__date"]).sort_values("__date")
+    date_range  = (df_sorted["__date"].max() - df_sorted["__date"].min()).days
+    n_periods   = len(df_sorted)
+
+    trends = []
+    for col in numeric_cols:
+        values = pd.to_numeric(df_sorted[col], errors="coerce")
+        mask   = values.notna()
+        if mask.sum() < 5: continue
+
+        # x = sequential position (0, 1, 2, ...), y = numeric values
+        x = np.arange(mask.sum(), dtype=float)
+        y = values[mask].values.astype(float)
+
+        # Linear regression using numpy.polyfit
+        try:
+            slope, intercept = np.polyfit(x, y, 1)
+        except Exception:
+            continue
+
+        # R-squared
+        y_pred   = slope * x + intercept
+        ss_res   = float(np.sum((y - y_pred) ** 2))
+        ss_tot   = float(np.sum((y - y.mean()) ** 2))
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+        # Percent change from first to last value
+        start_val = float(y[0])
+        end_val   = float(y[-1])
+        pct_change = (
+            ((end_val - start_val) / abs(start_val)) * 100
+            if start_val != 0 else 0
+        )
+
+        # Classify trend strength + direction
+        if   abs(slope) < 1e-9:        direction = "flat"
+        elif slope > 0:                direction = "rising"
+        else:                          direction = "falling"
+
+        if   r_squared >= 0.7:         strength = "strong"
+        elif r_squared >= 0.4:         strength = "moderate"
+        elif r_squared >= 0.15:        strength = "weak"
+        else:                          strength = "no clear"
+
+        # Human-readable summary
+        if direction == "flat" or strength == "no clear":
+            summary = f"'{col}' shows no clear trend over the period"
+        else:
+            summary = (
+                f"'{col}' has a {strength} {direction} trend — "
+                f"{'+' if pct_change > 0 else ''}{round(pct_change, 1)}% "
+                f"change from start to end"
+            )
+
+        trends.append({
+            "column":     col,
+            "direction":  direction,
+            "strength":   strength,
+            "slope":      round(float(slope), 4),
+            "rSquared":   round(float(r_squared), 3),
+            "pctChange":  round(float(pct_change), 1),
+            "startValue": round(start_val, 2),
+            "endValue":   round(end_val, 2),
+            "summary":    summary,
+        })
+
+    # ── 4. Rank by strength (strongest trends first) ───────────────────
+    strength_order = {"strong": 3, "moderate": 2, "weak": 1, "no clear": 0}
+    trends.sort(key=lambda t: (strength_order[t["strength"]], abs(t["pctChange"])), reverse=True)
+
+    return {
+        "hasDateColumn": True,
+        "dateColumn":    date_col,
+        "periodDays":    date_range,
+        "dataPoints":    n_periods,
+        "trends":        trends[:10],
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

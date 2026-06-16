@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies -correlations')
+      .select('-sampleRows -columnStats -anomalies -correlations -trends')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -72,6 +72,28 @@ router.post('/', async (req, res) => {
       }
     }
 
+    let insights = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.generateInsights(allRows)
+      if (result) {
+        insights = result
+        console.log(`[datasets] ✓ Insights: ${result.insights?.length || 0} observations generated`)
+      }
+    }
+
+    let trends = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.detectTrends(allRows)
+      if (result) {
+        trends = result
+        if (result.hasDateColumn) {
+          console.log(`[datasets] ✓ Trends: ${result.trends?.length || 0} trend(s) detected on '${result.dateColumn}' over ${result.periodDays} days`)
+        } else {
+          console.log(`[datasets] ✓ Trends: no date column detected — skipped`)
+        }
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
@@ -88,6 +110,8 @@ router.post('/', async (req, res) => {
       if (anomalies)    existing.anomalies    = anomalies
       if (correlations) existing.correlations = correlations
       if (quality)      existing.quality      = quality
+      if (insights)     existing.insights     = insights
+      if (trends)       existing.trends       = trends
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
@@ -95,6 +119,8 @@ router.post('/', async (req, res) => {
       if (anomalies)    existing.markModified('anomalies')
       if (correlations) existing.markModified('correlations')
       if (quality)      existing.markModified('quality')
+      if (insights)     existing.markModified('insights')
+      if (trends)       existing.markModified('trends')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -113,6 +139,8 @@ router.post('/', async (req, res) => {
       anomalies:    anomalies    || {},
       correlations: correlations || {},
       quality:      quality      || {},
+      insights:     insights     || {},
+      trends:       trends       || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

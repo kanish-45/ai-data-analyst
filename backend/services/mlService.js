@@ -105,6 +105,44 @@ async function computeQuality(rows) {
   }
 }
 
+async function generateInsights(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/insights`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+    if (!res.ok) {
+      console.warn(`[mlService] /insights returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /insights failed:', err.message)
+    return null
+  }
+}
+
+async function detectTrends(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/trends`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+    if (!res.ok) {
+      console.warn(`[mlService] /trends returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /trends failed:', err.message)
+    return null
+  }
+}
+
 module.exports = {
   ML_SERVICE_URL,
   isHealthy,
@@ -112,4 +150,6 @@ module.exports = {
   detectAnomalies,
   computeCorrelations,
   computeQuality,
+  generateInsights,
+  detectTrends,
 }

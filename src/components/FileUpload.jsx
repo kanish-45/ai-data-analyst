@@ -280,13 +280,20 @@ export default function FileUpload({ onNavigateToChat }) {
           if (savedDataset?.columnStats) {
             dataset.columnStats = savedDataset.columnStats
           }
-          // Prefer the backend's stats (might be Python-computed)
-          if (savedDataset?.columnStats) {
-            dataset.columnStats = savedDataset.columnStats
-          }
-          // Also attach anomalies so the AI can see outliers
           if (savedDataset?.anomalies) {
             dataset.anomalies = savedDataset.anomalies
+          }
+          if (savedDataset?.correlations) {
+            dataset.correlations = savedDataset.correlations
+          }
+          if (savedDataset?.quality) {
+            dataset.quality = savedDataset.quality
+          }
+          if (savedDataset?.insights) {
+            dataset.insights = savedDataset.insights
+          }
+          if (savedDataset?.trends) {
+            dataset.trends = savedDataset.trends
           }
           
           setSavedToCloud(true)

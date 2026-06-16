@@ -112,6 +112,49 @@ export default function AnalyticsSection() {
           Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
         </p>
       </div>
+      {/* Trends card (only shows if dataset has a date column) */}
+      {activeDataset.trends?.hasDateColumn && activeDataset.trends?.trends?.length > 0 && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+              <TrendingUp size={18} className="text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold">Time-series trends</h2>
+              <p className="text-xs text-gray-500">
+                Linear regression over <span className="font-mono">{activeDataset.trends.dateColumn}</span> · {activeDataset.trends.periodDays} days · {activeDataset.trends.dataPoints} points
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-white/5">
+            {activeDataset.trends.trends.slice(0, 10).map((t, i) => {
+              const dir = t.direction
+              const dirColor =
+                dir === 'rising'  ? 'text-emerald-400' :
+                dir === 'falling' ? 'text-rose-400'    :
+                                    'text-gray-500'
+              const arrow =
+                dir === 'rising'  ? '↗' :
+                dir === 'falling' ? '↘' : '→'
+              return (
+                <div key={i} className="px-6 py-3 flex items-center gap-4">
+                  <div className={'text-xl ' + dirColor}>{arrow}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white font-mono">{t.column}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{t.summary}</p>
+                  </div>
+                  <div className={'px-3 py-1.5 rounded-lg font-mono text-sm font-semibold tabular-nums ' +
+                    (dir === 'rising'  ? 'bg-emerald-500/15 text-emerald-400' :
+                     dir === 'falling' ? 'bg-rose-500/15 text-rose-400'       :
+                                         'bg-gray-500/15 text-gray-400')}>
+                    {t.pctChange > 0 ? '+' : ''}{t.pctChange}%
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Strongest correlations card */}
       <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">

@@ -2,9 +2,7 @@ const express     = require('express')
 const auth        = require('../middleware/auth')
 const Dataset     = require('../models/Dataset')
 const ChatSession = require('../models/Chat')
-console.log('[STATS DEBUG] typeof Dataset:', typeof Dataset)
-console.log('[STATS DEBUG] Dataset.modelName:', Dataset?.modelName)
-console.log('[STATS DEBUG] Dataset has find?:', typeof Dataset?.find)
+
 
 const router = express.Router()
 
