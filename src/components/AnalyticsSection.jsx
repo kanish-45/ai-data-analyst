@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useData } from '../context/DataContext'
-import { TrendingUp, BarChart3, Info, Loader2 } from 'lucide-react'
+import { TrendingUp, BarChart3, Info, Loader2, Sparkles } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
@@ -112,6 +112,87 @@ export default function AnalyticsSection() {
           Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
         </p>
       </div>
+      {/* K-Means clustering card (only shows if clusters were computed) */}
+      {activeDataset.clusters?.hasClusters && activeDataset.clusters?.clusters?.length > 0 && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+              <Sparkles size={18} className="text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold">Clusters (K-Means)</h2>
+              <p className="text-xs text-gray-500">
+                {activeDataset.clusters.k} clusters discovered across {activeDataset.clusters.numericColumns?.length || 0} numeric columns · scikit-learn
+              </p>
+            </div>
+          </div>
+
+          {/* Scatter plot */}
+          <div className="p-6 border-b border-white/5">
+            <p className="text-xs text-gray-500 mb-3">
+              <span className="font-mono">{activeDataset.clusters.scatter?.xColumn}</span> (x-axis) · <span className="font-mono">{activeDataset.clusters.scatter?.yColumn}</span> (y-axis)
+            </p>
+            <svg viewBox="0 0 400 280" className="w-full h-64">
+              {(() => {
+                const points = activeDataset.clusters.scatter?.points || []
+                if (points.length === 0) return null
+                const xs = points.map((p) => p.x)
+                const ys = points.map((p) => p.y)
+                const xMin = Math.min(...xs), xMax = Math.max(...xs)
+                const yMin = Math.min(...ys), yMax = Math.max(...ys)
+                const xRange = xMax - xMin || 1
+                const yRange = yMax - yMin || 1
+                const colors = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24', '#34d399', '#fb7185']
+                return points.map((p, i) => {
+                  const cx = 30 + ((p.x - xMin) / xRange) * 350
+                  const cy = 250 - ((p.y - yMin) / yRange) * 220
+                  return (
+                    <circle
+                      key={i}
+                      cx={cx} cy={cy} r="5"
+                      fill={colors[p.cluster % colors.length]}
+                      opacity="0.75"
+                      stroke="#0f172a" strokeWidth="1"
+                    />
+                  )
+                })
+              })()}
+              {/* Axes */}
+              <line x1="30" y1="250" x2="380" y2="250" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+              <line x1="30" y1="30"  x2="30"  y2="250" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+            </svg>
+          </div>
+
+          {/* Cluster details */}
+          <div className="divide-y divide-white/5">
+            {activeDataset.clusters.clusters.map((c, i) => {
+              const colors = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24', '#34d399', '#fb7185']
+              const color  = colors[c.clusterId % colors.length]
+              return (
+                <div key={i} className="px-6 py-3">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                    <p className="text-sm font-semibold text-white flex-1">{c.label}</p>
+                    <span className="text-xs text-gray-500 tabular-nums">{c.size} rows · {c.percentage}%</span>
+                  </div>
+                  {c.differences && c.differences.length > 0 && (
+                    <div className="ml-6 space-y-0.5">
+                      {c.differences.slice(0, 3).map((d, j) => (
+                        <p key={j} className="text-xs text-gray-500">
+                          <span className="font-mono">{d.column}</span>: {d.value} —{' '}
+                          <span className={d.direction === 'above' ? 'text-emerald-400' : 'text-rose-400'}>
+                            {d.pctOffMean > 0 ? '+' : ''}{d.pctOffMean}% vs avg
+                          </span>
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {/* Trends card (only shows if dataset has a date column) */}
       {activeDataset.trends?.hasDateColumn && activeDataset.trends?.trends?.length > 0 && (
         <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">

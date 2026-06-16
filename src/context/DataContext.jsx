@@ -281,6 +281,23 @@ export function buildDatasetContext(dataset) {
       `\nTime-series trends (linear regression over '${trendsData.dateColumn}', ${trendsData.periodDays} days, ${trendsData.dataPoints} data points):\n` +
       lines.join('\n')
   }
+  // ── Clusters section ───────────────────────────────────────────────────
+  const clustersData = dataset.clusters || {}
+  const clusterList  = clustersData.clusters || []
+  const hasClusters  = clustersData.hasClusters && clusterList.length > 0
+
+  let clusterBlock = ''
+  if (hasClusters) {
+    const lines = clusterList.map((c) => {
+      const diffs = (c.differences || []).slice(0, 3).map((d) =>
+        `${d.column}=${d.value} (${d.pctOffMean > 0 ? '+' : ''}${d.pctOffMean}% vs avg)`
+      ).join(', ')
+      return `  ${c.label} — ${c.size} rows (${c.percentage}%)` + (diffs ? `; characteristics: ${diffs}` : '')
+    })
+    clusterBlock =
+      `\nClusters (K-Means with K=${clustersData.k}, scikit-learn, computed over ${clustersData.numericColumns?.length || 0} numeric columns):\n` +
+      lines.join('\n')
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
@@ -305,7 +322,7 @@ ${correlationBlock}
 ${qualityBlock}
 ${insightBlock}
 ${trendBlock}
-
+${clusterBlock}
 
 Sample data (first 5 rows for reference):
 ${sampleRows}

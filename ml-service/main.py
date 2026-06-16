@@ -736,6 +736,175 @@ def detect_trends(req: ProfileRequest):
         "dataPoints":    n_periods,
         "trends":        trends[:10],
     }
+    # ── K-Means clustering ───────────────────────────────────────────────────────
+@app.post("/clusters")
+def compute_clusters(req: ProfileRequest):
+    """
+    Run K-Means clustering on the numeric columns of the dataset.
+
+    Auto-selects the best K using the elbow method (testing K=2..6 and picking
+    the one with the biggest "elbow" in within-cluster sum of squares).
+
+    Returns: cluster assignments per row, cluster centers, sizes, and a
+    plain-English description of each cluster (which columns are above/below
+    the dataset mean for each cluster).
+    """
+    from sklearn.cluster     import KMeans
+    from sklearn.preprocessing import StandardScaler
+
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    if len(df) < 6:
+        return {"hasClusters": False, "note": "Need at least 6 rows to cluster."}
+
+    # ── 1. Pick numeric columns with enough variance ───────────────────
+    numeric_cols = []
+    for col in df.columns:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 5: continue
+        if numeric.nunique() < 2: continue           # constant column — useless
+        if (len(numeric) / len(df)) >= 0.7:
+            numeric_cols.append(col)
+
+    if len(numeric_cols) < 2:
+        return {
+            "hasClusters": False,
+            "note":        f"Need at least 2 numeric columns to cluster — found {len(numeric_cols)}.",
+        }
+
+    # ── 2. Build the feature matrix (impute means, then standardize) ───
+    X_raw = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    X_raw = X_raw.fillna(X_raw.mean())               # fill NaNs with column means
+    if X_raw.isna().any().any():                      # still NaN → drop column
+        bad = X_raw.columns[X_raw.isna().any()].tolist()
+        X_raw = X_raw.drop(columns=bad)
+        numeric_cols = [c for c in numeric_cols if c not in bad]
+        if len(numeric_cols) < 2:
+            return {"hasClusters": False, "note": "Not enough usable numeric data."}
+
+    scaler   = StandardScaler()
+    X_scaled = scaler.fit_transform(X_raw.values)
+
+    # ── 3. Find best K via the elbow method (K=2..min(6, n/3)) ─────────
+    max_k    = min(6, max(2, len(df) // 3))
+    inertias = []
+    models   = {}
+    for k in range(2, max_k + 1):
+        km = KMeans(n_clusters=k, n_init=10, random_state=42)
+        km.fit(X_scaled)
+        inertias.append((k, float(km.inertia_)))
+        models[k] = km
+
+    # Elbow detection: biggest drop ratio gives best K
+    best_k = 2
+    if len(inertias) >= 3:
+        diffs = []
+        for i in range(1, len(inertias) - 1):
+            k_prev, inertia_prev = inertias[i - 1]
+            k_curr, inertia_curr = inertias[i]
+            k_next, inertia_next = inertias[i + 1]
+            drop1 = inertia_prev - inertia_curr
+            drop2 = inertia_curr - inertia_next
+            ratio = drop1 / max(drop2, 0.001)
+            diffs.append((k_curr, ratio))
+        if diffs:
+            best_k = max(diffs, key=lambda d: d[1])[0]
+
+    best_model = models[best_k]
+    labels     = best_model.labels_
+
+    # ── 4. Compute cluster centers in original (un-scaled) units ───────
+    centers_raw = scaler.inverse_transform(best_model.cluster_centers_)
+
+    # ── 5. Build the per-cluster summary ───────────────────────────────
+    overall_means = {col: float(X_raw[col].mean()) for col in numeric_cols}
+    cluster_summaries = []
+
+    for cluster_id in range(best_k):
+        mask        = labels == cluster_id
+        cluster_size = int(mask.sum())
+        pct          = round(cluster_size / len(df) * 100, 1)
+
+        # Per-column averages within this cluster
+        cluster_means = {}
+        for j, col in enumerate(numeric_cols):
+            cluster_means[col] = round(float(centers_raw[cluster_id][j]), 2)
+
+        # Describe what makes this cluster distinct
+        differences = []
+        for col in numeric_cols:
+            cluster_val = cluster_means[col]
+            overall     = overall_means[col]
+            if overall == 0: continue
+            diff_pct = (cluster_val - overall) / abs(overall) * 100
+            if abs(diff_pct) >= 15:    # only mention noticeably different columns
+                differences.append({
+                    "column":     col,
+                    "direction":  "above" if diff_pct > 0 else "below",
+                    "pctOffMean": round(float(diff_pct), 1),
+                    "value":      cluster_val,
+                })
+
+        # Sort differences by magnitude — biggest distinctions first
+        differences.sort(key=lambda d: abs(d["pctOffMean"]), reverse=True)
+
+        # Plain-English label
+        if not differences:
+            label = f"Cluster {cluster_id + 1} (typical / near-average)"
+        else:
+            top_diff = differences[0]
+            label = (
+                f"Cluster {cluster_id + 1} — "
+                f"{'high' if top_diff['direction'] == 'above' else 'low'} {top_diff['column']}"
+            )
+
+        cluster_summaries.append({
+            "clusterId":    cluster_id,
+            "label":        label,
+            "size":         cluster_size,
+            "percentage":   pct,
+            "centerValues": cluster_means,
+            "differences":  differences[:5],
+        })
+
+    # Sort clusters by size, largest first
+    cluster_summaries.sort(key=lambda c: c["size"], reverse=True)
+
+    # ── 6. Pick 2 best columns for the 2D scatter plot visualization ───
+    # Use the two columns with the largest "between-cluster" variance
+    col_variances = []
+    for j, col in enumerate(numeric_cols):
+        cluster_centers_col = centers_raw[:, j]
+        variance = float(np.var(cluster_centers_col))
+        col_variances.append((col, j, variance))
+    col_variances.sort(key=lambda x: x[2], reverse=True)
+    scatter_x, scatter_y = col_variances[0][0], col_variances[1][0] if len(col_variances) > 1 else col_variances[0][0]
+
+    # Build scatter points (sample up to 500 rows for performance)
+    sample_size = min(500, len(df))
+    sample_idx  = np.random.RandomState(42).choice(len(df), sample_size, replace=False) if len(df) > sample_size else np.arange(len(df))
+    scatter_points = []
+    for idx in sample_idx:
+        scatter_points.append({
+            "x":         float(X_raw[scatter_x].iloc[int(idx)]),
+            "y":         float(X_raw[scatter_y].iloc[int(idx)]),
+            "cluster":   int(labels[idx]),
+        })
+
+    return {
+        "hasClusters":      True,
+        "k":                best_k,
+        "numericColumns":   numeric_cols,
+        "totalRows":        len(df),
+        "clusters":         cluster_summaries,
+        "scatter": {
+            "xColumn":      scatter_x,
+            "yColumn":      scatter_y,
+            "points":       scatter_points,
+        },
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

@@ -295,6 +295,9 @@ export default function FileUpload({ onNavigateToChat }) {
           if (savedDataset?.trends) {
             dataset.trends = savedDataset.trends
           }
+          if (savedDataset?.clusters) {
+            dataset.clusters = savedDataset.clusters
+          }
           
           setSavedToCloud(true)
         } catch (saveErr) {

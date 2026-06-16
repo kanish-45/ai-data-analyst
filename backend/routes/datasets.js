@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies -correlations -trends')
+      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -94,6 +94,19 @@ router.post('/', async (req, res) => {
       }
     }
 
+    let clusters = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.computeClusters(allRows)
+      if (result) {
+        clusters = result
+        if (result.hasClusters) {
+          console.log(`[datasets] ✓ Clusters: K=${result.k} found across ${result.numericColumns?.length || 0} numeric columns`)
+        } else {
+          console.log(`[datasets] ✓ Clusters: ${result.note || 'not applicable'}`)
+        }
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
@@ -112,6 +125,7 @@ router.post('/', async (req, res) => {
       if (quality)      existing.quality      = quality
       if (insights)     existing.insights     = insights
       if (trends)       existing.trends       = trends
+      if (clusters)     existing.clusters     = clusters
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
@@ -121,6 +135,7 @@ router.post('/', async (req, res) => {
       if (quality)      existing.markModified('quality')
       if (insights)     existing.markModified('insights')
       if (trends)       existing.markModified('trends')
+      if (clusters)     existing.markModified('clusters')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -141,6 +156,7 @@ router.post('/', async (req, res) => {
       quality:      quality      || {},
       insights:     insights     || {},
       trends:       trends       || {},
+      clusters:     clusters     || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

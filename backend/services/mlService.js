@@ -143,6 +143,25 @@ async function detectTrends(rows) {
   }
 }
 
+async function computeClusters(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/clusters`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+    if (!res.ok) {
+      console.warn(`[mlService] /clusters returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /clusters failed:', err.message)
+    return null
+  }
+}
+
 module.exports = {
   ML_SERVICE_URL,
   isHealthy,
@@ -152,4 +171,5 @@ module.exports = {
   computeQuality,
   generateInsights,
   detectTrends,
+  computeClusters,
 }
