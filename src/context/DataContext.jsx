@@ -328,6 +328,23 @@ export function buildDatasetContext(dataset) {
       `  PC2 explains ${pcaData.explainedVariance.PC2}% of variance, top loadings: ${pc2Top}\n` +
       `  Total: ${pcaData.explainedVariance.total}% of dataset variance captured in 2 dimensions.`
   }
+  // ── Feature importance section ─────────────────────────────────────────
+  const importanceData = dataset.importance || {}
+  const importanceTargets = importanceData.targets || []
+  const hasImportance = importanceData.hasImportance && importanceTargets.length > 0
+
+  let importanceBlock = ''
+  if (hasImportance) {
+    const lines = importanceTargets.slice(0, 5).map((t) => {
+      const topFeatures = (t.features || []).slice(0, 3)
+        .map((f) => `${f.feature}=${f.importancePct}%`)
+        .join(', ')
+      return `  predicting '${t.target}': R²=${t.rSquared} (${t.modelQuality}), top features: ${topFeatures}`
+    })
+    importanceBlock =
+      `\nFeature importance (Random Forest Regressor, scikit-learn):\n` +
+      lines.join('\n')
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
@@ -355,6 +372,7 @@ ${trendBlock}
 ${clusterBlock}
 ${forecastBlock}
 ${pcaBlock}
+${importanceBlock}
 
 
 Sample data (first 5 rows for reference):

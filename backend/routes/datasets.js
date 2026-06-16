@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters -forecast -pca')
+      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters -forecast -pca -importance')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -133,6 +133,19 @@ router.post('/', async (req, res) => {
       }
     }
 
+    let importance = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.computeImportance(allRows)
+      if (result) {
+        importance = result
+        if (result.hasImportance) {
+          console.log(`[datasets] ✓ Feature importance: ${result.totalTargets} target columns analyzed via Random Forest`)
+        } else {
+          console.log(`[datasets] ✓ Feature importance: ${result.note || 'not applicable'}`)
+        }
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
@@ -154,6 +167,7 @@ router.post('/', async (req, res) => {
       if (clusters)     existing.clusters     = clusters
       if (forecast)     existing.forecast     = forecast
       if (pca)          existing.pca          = pca
+      if (importance)   existing.importance   = importance
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
@@ -166,6 +180,7 @@ router.post('/', async (req, res) => {
       if (clusters)     existing.markModified('clusters')
       if (forecast)     existing.markModified('forecast')
       if (pca)          existing.markModified('pca')
+      if (importance)   existing.markModified('importance')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -189,6 +204,7 @@ router.post('/', async (req, res) => {
       clusters:     clusters     || {},
       forecast:     forecast     || {},
       pca:          pca          || {},
+      importance:   importance   || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

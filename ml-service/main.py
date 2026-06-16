@@ -1185,6 +1185,137 @@ def compute_pca(req: ProfileRequest):
         },
         "interpretation":    interpretation,
     }
+    # ── Feature importance (Random Forest) ───────────────────────────────────────
+@app.post("/importance")
+def compute_feature_importance(req: ProfileRequest):
+    """
+    Compute feature importance for every numeric column as a potential target.
+
+    For each numeric column, fit a Random Forest Regressor (using the other
+    numeric columns as features) and return the relative importance of each
+    feature in predicting that target.
+
+    Returns the R² score (model fit quality) and importance scores (summing
+    to 100%) so users can see which features actually matter.
+    """
+    from sklearn.ensemble        import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics         import r2_score
+
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    if len(df) < 10:
+        return {
+            "hasImportance": False,
+            "note":          "Need at least 10 rows for feature importance.",
+        }
+
+    # ── 1. Find usable numeric columns ─────────────────────────────────
+    numeric_cols = []
+    for col in df.columns:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 10: continue
+        if numeric.nunique() < 3: continue          # nearly-constant column
+        if (len(numeric) / len(df)) >= 0.7:
+            numeric_cols.append(col)
+
+    if len(numeric_cols) < 2:
+        return {
+            "hasImportance": False,
+            "note":          f"Need at least 2 numeric columns to compute importance — found {len(numeric_cols)}.",
+        }
+
+    # ── 2. Build the numeric matrix, fill NaNs ─────────────────────────
+    X_all = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    X_all = X_all.fillna(X_all.mean())
+
+    # ── 3. For each numeric column as target, fit a Random Forest ──────
+    targets = []
+    for target_col in numeric_cols:
+        feature_cols = [c for c in numeric_cols if c != target_col]
+        y = X_all[target_col].values
+        X = X_all[feature_cols].values
+
+        # Skip if target is constant
+        if pd.Series(y).nunique() < 2:
+            continue
+
+        try:
+            # Use train_test_split when we have enough rows (split 80/20).
+            # Otherwise (small datasets) fit on all data so importance is stable.
+            if len(df) >= 30:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+                model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                r2 = float(r2_score(y_test, y_pred))
+            else:
+                model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+                model.fit(X, y)
+                r2 = float(model.score(X, y))    # training R² for small data
+
+            # Importance as a fraction summing to 1.0
+            importances = model.feature_importances_
+
+            # Build the ranked list
+            features = []
+            for j, feat_col in enumerate(feature_cols):
+                features.append({
+                    "feature":     feat_col,
+                    "importance":  round(float(importances[j]), 4),
+                    "importancePct": round(float(importances[j]) * 100, 1),
+                })
+
+            features.sort(key=lambda f: f["importance"], reverse=True)
+
+            # Model-quality labels
+            if   r2 >= 0.7: quality = "strong fit"
+            elif r2 >= 0.4: quality = "moderate fit"
+            elif r2 >= 0.15: quality = "weak fit"
+            else:            quality = "poor fit"
+
+            # Build a short interpretation
+            top      = features[0]
+            top_pct  = top["importancePct"]
+            top_feat = top["feature"]
+            interpretation = (
+                f"To predict '{target_col}', '{top_feat}' is the most important feature "
+                f"({top_pct}% of the predictive signal). "
+                f"R² = {round(r2, 3)} ({quality})."
+            )
+
+            targets.append({
+                "target":         target_col,
+                "rSquared":       round(r2, 3),
+                "modelQuality":   quality,
+                "topFeature":     top_feat,
+                "topFeaturePct":  top_pct,
+                "features":       features,
+                "interpretation": interpretation,
+            })
+
+        except Exception as e:
+            continue
+
+    if not targets:
+        return {
+            "hasImportance": False,
+            "note":          "Random Forest failed to fit any target column.",
+        }
+
+    # Sort targets by R² so the easiest-to-predict targets come first
+    targets.sort(key=lambda t: t["rSquared"], reverse=True)
+
+    return {
+        "hasImportance": True,
+        "numericColumns": numeric_cols,
+        "totalTargets":   len(targets),
+        "targets":        targets,
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

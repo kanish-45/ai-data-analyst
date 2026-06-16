@@ -197,6 +197,24 @@ async function computePCA(rows) {
     return null
   }
 }
+async function computeImportance(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/importance`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    }, 60000)    // 60s — Random Forest can be slow on bigger datasets
+    if (!res.ok) {
+      console.warn(`[mlService] /importance returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /importance failed:', err.message)
+    return null
+  }
+}
 
 module.exports = {
   ML_SERVICE_URL,
@@ -210,4 +228,5 @@ module.exports = {
   computeClusters,
   forecastFuture,
   computePCA,
+  computeImportance,
 }

@@ -3,6 +3,87 @@ import { useData } from '../context/DataContext'
 import { TrendingUp, BarChart3, Info, Loader2, Sparkles } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+// ── Feature Importance card with target selector ─────────────────────────────
+function FeatureImportanceCard({ data }) {
+  const targets = data.targets || []
+  const [selectedTarget, setSelectedTarget] = useState(targets[0]?.target)
+  const current = targets.find((t) => t.target === selectedTarget) || targets[0]
+
+  if (!current) return null
+
+  const r2          = current.rSquared
+  const qualityCol  = r2 >= 0.7 ? 'text-emerald-400' : r2 >= 0.4 ? 'text-amber-400' : 'text-rose-400'
+  const qualityBg   = r2 >= 0.7 ? 'bg-emerald-500/15 border-emerald-500/30' :
+                      r2 >= 0.4 ? 'bg-amber-500/15 border-amber-500/30'    :
+                                  'bg-rose-500/15 border-rose-500/30'
+
+  return (
+    <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+        <div className="w-10 h-10 rounded-xl bg-pink-500/10 flex items-center justify-center">
+          <TrendingUp size={18} className="text-pink-400" />
+        </div>
+        <div className="flex-1">
+          <h2 className="text-white font-bold">Feature importance</h2>
+          <p className="text-xs text-gray-500">
+            Random Forest Regressor · {data.totalTargets} targets analyzed · scikit-learn
+          </p>
+        </div>
+      </div>
+
+      {/* Target picker */}
+      <div className="px-6 py-3 border-b border-white/5 bg-white/2">
+        <p className="text-xs text-gray-500 mb-2">Choose a target to predict:</p>
+        <div className="flex flex-wrap gap-2">
+          {targets.map((t) => (
+            <button
+              key={t.target}
+              onClick={() => setSelectedTarget(t.target)}
+              className={'px-3 py-1.5 rounded-lg text-xs font-mono transition-colors ' +
+                (selectedTarget === t.target
+                  ? 'bg-pink-500/20 text-pink-300 border border-pink-500/40'
+                  : 'bg-white/5 text-gray-400 border border-white/10 hover:text-white')}
+            >
+              {t.target}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* R² + interpretation */}
+      <div className="px-6 py-4 border-b border-white/5">
+        <div className="flex items-center gap-3 mb-2">
+          <div className={'px-3 py-1.5 rounded-lg font-mono text-sm font-semibold ' + qualityBg + ' ' + qualityCol}>
+            R² = {r2.toFixed(3)}
+          </div>
+          <span className={'text-xs ' + qualityCol}>{current.modelQuality}</span>
+        </div>
+        <p className="text-xs text-gray-400">{current.interpretation}</p>
+      </div>
+
+      {/* Feature importance bars */}
+      <div className="px-6 py-4 space-y-3">
+        <p className="text-xs text-gray-500 mb-2">
+          Features ranked by predictive importance (sum to 100%):
+        </p>
+        {current.features.map((f, i) => (
+          <div key={i} className="space-y-1">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="font-mono text-white">{f.feature}</span>
+              <span className="font-mono text-pink-400 tabular-nums">{f.importancePct}%</span>
+            </div>
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-pink-400 to-pink-500"
+                style={{ width: `${Math.min(100, f.importancePct)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // ── Color helpers ────────────────────────────────────────────────────────────
 function corrColor(r) {
@@ -112,6 +193,10 @@ export default function AnalyticsSection() {
           Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
         </p>
       </div>
+      {/* Feature Importance card (only shows if importance was computed) */}
+      {activeDataset.importance?.hasImportance && activeDataset.importance?.targets?.length > 0 && (
+        <FeatureImportanceCard data={activeDataset.importance} />
+      )}
       {/* PCA card (only shows if PCA was computed) */}
       {activeDataset.pca?.hasPCA && activeDataset.pca?.scatter?.points?.length > 0 && (
         <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
