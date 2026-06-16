@@ -298,6 +298,36 @@ export function buildDatasetContext(dataset) {
       `\nClusters (K-Means with K=${clustersData.k}, scikit-learn, computed over ${clustersData.numericColumns?.length || 0} numeric columns):\n` +
       lines.join('\n')
   }
+  // ── Forecast section ───────────────────────────────────────────────────
+  const forecastData = dataset.forecast || {}
+  const forecastList = forecastData.forecasts || []
+  const hasForecast  = forecastData.hasForecast && forecastList.length > 0
+
+  let forecastBlock = ''
+  if (hasForecast) {
+    const lines = forecastList.map((f) => {
+      const last = f.predicted?.[f.predicted.length - 1]
+      const ci   = last ? ` (95% CI: ${last.lower}–${last.upper})` : ''
+      return `  ${f.column}: ${f.lastActual} now → ${f.lastForecast} forecasted ${forecastData.forecastLength} periods out (${f.pctChange > 0 ? '+' : ''}${f.pctChange}%, ${f.direction})${ci}`
+    })
+    forecastBlock =
+      `\nForecasts (ARIMA(1,1,1), statsmodels, forecasting ${forecastData.forecastLength} periods ahead):\n` +
+      lines.join('\n')
+  }
+  // ── PCA section ────────────────────────────────────────────────────────
+  const pcaData = dataset.pca || {}
+  const hasPCA  = pcaData.hasPCA && pcaData.explainedVariance
+
+  let pcaBlock = ''
+  if (hasPCA) {
+    const pc1Top = (pcaData.loadings?.PC1 || []).slice(0, 3).map((l) => `${l.column}=${l.loading}`).join(', ')
+    const pc2Top = (pcaData.loadings?.PC2 || []).slice(0, 3).map((l) => `${l.column}=${l.loading}`).join(', ')
+    pcaBlock =
+      `\nPrincipal Component Analysis (scikit-learn PCA, ${pcaData.totalColumns} columns reduced to 2D):\n` +
+      `  PC1 explains ${pcaData.explainedVariance.PC1}% of variance, top loadings: ${pc1Top}\n` +
+      `  PC2 explains ${pcaData.explainedVariance.PC2}% of variance, top loadings: ${pc2Top}\n` +
+      `  Total: ${pcaData.explainedVariance.total}% of dataset variance captured in 2 dimensions.`
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
@@ -323,6 +353,9 @@ ${qualityBlock}
 ${insightBlock}
 ${trendBlock}
 ${clusterBlock}
+${forecastBlock}
+${pcaBlock}
+
 
 Sample data (first 5 rows for reference):
 ${sampleRows}

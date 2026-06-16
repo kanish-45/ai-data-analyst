@@ -22,6 +22,8 @@ const DatasetSchema = new mongoose.Schema(
     insights:    { type: mongoose.Schema.Types.Mixed, default: {} },
     trends:      { type: mongoose.Schema.Types.Mixed, default: {} },
     clusters:    { type: mongoose.Schema.Types.Mixed, default: {} },
+    forecast:    { type: mongoose.Schema.Types.Mixed, default: {} },
+    pca:         { type: mongoose.Schema.Types.Mixed, default: {} },
     tags:        { type: [String], default: [] },
     status:      { type: String, enum: ['ready', 'error'], default: 'ready' },
   },
@@ -58,6 +60,8 @@ DatasetSchema.methods.toFull = function () {
     insights:     this.insights,
     trends:       this.trends,
     clusters:     this.clusters,
+    forecast:     this.forecast,
+    pca:          this.pca,
   }
 }
 

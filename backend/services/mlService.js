@@ -161,6 +161,42 @@ async function computeClusters(rows) {
     return null
   }
 }
+async function forecastFuture(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/forecast`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    }, 60000)    // 60s — ARIMA can take longer
+    if (!res.ok) {
+      console.warn(`[mlService] /forecast returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /forecast failed:', err.message)
+    return null
+  }
+}
+async function computePCA(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/pca`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+    if (!res.ok) {
+      console.warn(`[mlService] /pca returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /pca failed:', err.message)
+    return null
+  }
+}
 
 module.exports = {
   ML_SERVICE_URL,
@@ -172,4 +208,6 @@ module.exports = {
   generateInsights,
   detectTrends,
   computeClusters,
+  forecastFuture,
+  computePCA,
 }

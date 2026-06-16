@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters')
+      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters -forecast -pca')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -107,6 +107,32 @@ router.post('/', async (req, res) => {
       }
     }
 
+    let forecast = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.forecastFuture(allRows)
+      if (result) {
+        forecast = result
+        if (result.hasForecast && result.forecasts?.length > 0) {
+          console.log(`[datasets] ✓ Forecast: ${result.forecasts.length} column(s) forecasted ${result.forecastLength} periods ahead via ARIMA`)
+        } else {
+          console.log(`[datasets] ✓ Forecast: ${result.note || 'not applicable'}`)
+        }
+      }
+    }
+
+    let pca = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.computePCA(allRows)
+      if (result) {
+        pca = result
+        if (result.hasPCA) {
+          console.log(`[datasets] ✓ PCA: ${result.totalColumns} columns reduced to 2D, ${result.explainedVariance?.total}% variance explained`)
+        } else {
+          console.log(`[datasets] ✓ PCA: ${result.note || 'not applicable'}`)
+        }
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
@@ -126,6 +152,8 @@ router.post('/', async (req, res) => {
       if (insights)     existing.insights     = insights
       if (trends)       existing.trends       = trends
       if (clusters)     existing.clusters     = clusters
+      if (forecast)     existing.forecast     = forecast
+      if (pca)          existing.pca          = pca
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
@@ -136,6 +164,8 @@ router.post('/', async (req, res) => {
       if (insights)     existing.markModified('insights')
       if (trends)       existing.markModified('trends')
       if (clusters)     existing.markModified('clusters')
+      if (forecast)     existing.markModified('forecast')
+      if (pca)          existing.markModified('pca')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -157,6 +187,8 @@ router.post('/', async (req, res) => {
       insights:     insights     || {},
       trends:       trends       || {},
       clusters:     clusters     || {},
+      forecast:     forecast     || {},
+      pca:          pca          || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

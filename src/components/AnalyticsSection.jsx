@@ -112,6 +112,108 @@ export default function AnalyticsSection() {
           Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
         </p>
       </div>
+      {/* PCA card (only shows if PCA was computed) */}
+      {activeDataset.pca?.hasPCA && activeDataset.pca?.scatter?.points?.length > 0 && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+              <BarChart3 size={18} className="text-blue-400" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold">Principal Component Analysis</h2>
+              <p className="text-xs text-gray-500">
+                {activeDataset.pca.totalColumns} numeric columns reduced to 2D · {activeDataset.pca.explainedVariance?.total}% variance explained · scikit-learn PCA
+              </p>
+            </div>
+          </div>
+
+          {/* Scatter plot */}
+          <div className="p-6 border-b border-white/5">
+            <p className="text-xs text-gray-500 mb-3">
+              <span className="font-mono text-blue-400">PC1</span> ({activeDataset.pca.explainedVariance?.PC1}% variance) · <span className="font-mono text-blue-400">PC2</span> ({activeDataset.pca.explainedVariance?.PC2}% variance)
+            </p>
+            <svg viewBox="0 0 400 280" className="w-full h-64">
+              {(() => {
+                const points = activeDataset.pca.scatter.points
+                const xs = points.map((p) => p.x)
+                const ys = points.map((p) => p.y)
+                const xMin = Math.min(...xs), xMax = Math.max(...xs)
+                const yMin = Math.min(...ys), yMax = Math.max(...ys)
+                const xRange = xMax - xMin || 1
+                const yRange = yMax - yMin || 1
+                return points.map((p, i) => {
+                  const cx = 30 + ((p.x - xMin) / xRange) * 350
+                  const cy = 250 - ((p.y - yMin) / yRange) * 220
+                  return (
+                    <circle key={i} cx={cx} cy={cy} r="4"
+                      fill="#60a5fa" opacity="0.6"
+                      stroke="#0f172a" strokeWidth="1" />
+                  )
+                })
+              })()}
+              {/* Axes */}
+              <line x1="30" y1="250" x2="380" y2="250" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+              <line x1="30" y1="30"  x2="30"  y2="250" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+              {/* Axis labels */}
+              <text x="200" y="275" fill="rgba(255,255,255,0.4)" fontSize="10" fontFamily="monospace" textAnchor="middle">PC1</text>
+              <text x="15" y="140" fill="rgba(255,255,255,0.4)" fontSize="10" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 15 140)">PC2</text>
+            </svg>
+          </div>
+
+          {/* Loadings: which columns drive each PC */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-white/5">
+            <div className="px-6 py-4">
+              <p className="text-xs font-semibold text-blue-400 mb-2">
+                PC1 — {activeDataset.pca.explainedVariance?.PC1}% of variance
+              </p>
+              <p className="text-xs text-gray-500 mb-2">Top columns driving this axis:</p>
+              <div className="space-y-1">
+                {(activeDataset.pca.loadings?.PC1 || []).slice(0, 5).map((l, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs">
+                    <span className="font-mono text-gray-300 flex-1 truncate">{l.column}</span>
+                    <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className={'h-full ' + (l.loading >= 0 ? 'bg-blue-400' : 'bg-rose-400')}
+                           style={{ width: `${Math.round(l.absLoading * 100)}%` }} />
+                    </div>
+                    <span className={'font-mono tabular-nums w-12 text-right ' +
+                      (l.loading >= 0 ? 'text-blue-400' : 'text-rose-400')}>
+                      {l.loading > 0 ? '+' : ''}{l.loading}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs font-semibold text-blue-400 mb-2">
+                PC2 — {activeDataset.pca.explainedVariance?.PC2}% of variance
+              </p>
+              <p className="text-xs text-gray-500 mb-2">Top columns driving this axis:</p>
+              <div className="space-y-1">
+                {(activeDataset.pca.loadings?.PC2 || []).slice(0, 5).map((l, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs">
+                    <span className="font-mono text-gray-300 flex-1 truncate">{l.column}</span>
+                    <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className={'h-full ' + (l.loading >= 0 ? 'bg-blue-400' : 'bg-rose-400')}
+                           style={{ width: `${Math.round(l.absLoading * 100)}%` }} />
+                    </div>
+                    <span className={'font-mono tabular-nums w-12 text-right ' +
+                      (l.loading >= 0 ? 'text-blue-400' : 'text-rose-400')}>
+                      {l.loading > 0 ? '+' : ''}{l.loading}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Interpretation footer */}
+          <div className="px-6 py-3 border-t border-white/5 bg-blue-500/5">
+            <p className="text-xs text-gray-400 leading-relaxed">
+              {activeDataset.pca.interpretation}
+            </p>
+          </div>
+        </div>
+      )}
       {/* K-Means clustering card (only shows if clusters were computed) */}
       {activeDataset.clusters?.hasClusters && activeDataset.clusters?.clusters?.length > 0 && (
         <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
@@ -190,6 +292,110 @@ export default function AnalyticsSection() {
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+      {/* Forecast card (only shows if forecasts were computed) */}
+      {activeDataset.forecast?.hasForecast && activeDataset.forecast?.forecasts?.length > 0 && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
+              <TrendingUp size={18} className="text-violet-400" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold">Forecast (ARIMA)</h2>
+              <p className="text-xs text-gray-500">
+                Predicting {activeDataset.forecast.forecastLength} periods ahead · statsmodels ARIMA(1,1,1) with 95% confidence intervals
+              </p>
+            </div>
+          </div>
+
+          <div className="divide-y divide-white/5">
+            {activeDataset.forecast.forecasts.map((f, idx) => {
+              const dir       = f.direction
+              const dirColor  = dir === 'rising' ? 'text-emerald-400' : dir === 'falling' ? 'text-rose-400' : 'text-gray-400'
+              const arrow     = dir === 'rising' ? '↗' : dir === 'falling' ? '↘' : '→'
+              const chipColor = dir === 'rising' ? 'bg-emerald-500/15 text-emerald-400' :
+                                dir === 'falling' ? 'bg-rose-500/15 text-rose-400' :
+                                                    'bg-gray-500/15 text-gray-400'
+
+              // Build the chart: combine historical + predicted into one timeline
+              const allPoints = [
+                ...f.historical.map((p) => ({ ...p, value: p.value })),
+                ...f.predicted.map((p) => ({ ...p, value: p.value })),
+              ]
+              const allVals = [
+                ...f.historical.map((p) => p.value),
+                ...f.predicted.flatMap((p) => [p.value, p.lower, p.upper]),
+              ]
+              const yMin   = Math.min(...allVals)
+              const yMax   = Math.max(...allVals)
+              const yRange = yMax - yMin || 1
+              const W = 600, H = 180, PAD = 8
+              const xStep = (W - PAD * 2) / Math.max(allPoints.length - 1, 1)
+              const yOf   = (v) => H - PAD - ((v - yMin) / yRange) * (H - PAD * 2)
+
+              // Build path for historical line
+              const histPath = f.historical.map((p, i) =>
+                `${i === 0 ? 'M' : 'L'} ${PAD + i * xStep},${yOf(p.value)}`).join(' ')
+
+              // Build path for predicted line (continues from last historical point)
+              const startX  = PAD + (f.historical.length - 1) * xStep
+              const startY  = yOf(f.historical[f.historical.length - 1].value)
+              const predPath = `M ${startX},${startY} ` + f.predicted.map((p, i) =>
+                `L ${PAD + (f.historical.length + i) * xStep},${yOf(p.value)}`).join(' ')
+
+              // Build confidence-interval band
+              const ciTopPath = f.predicted.map((p, i) =>
+                `${i === 0 ? 'M' : 'L'} ${PAD + (f.historical.length + i) * xStep},${yOf(p.upper)}`).join(' ')
+              const ciBotPath = [...f.predicted].reverse().map((p, i) => {
+                const realIdx = f.predicted.length - 1 - i
+                return `L ${PAD + (f.historical.length + realIdx) * xStep},${yOf(p.lower)}`
+              }).join(' ')
+              const ciBand = `${ciTopPath} ${ciBotPath} Z`
+
+              return (
+                <div key={idx} className="px-6 py-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className={'text-xl ' + dirColor}>{arrow}</div>
+                    <p className="text-sm font-mono text-white flex-1">{f.column}</p>
+                    <div className={'px-3 py-1.5 rounded-lg font-mono text-xs font-semibold tabular-nums ' + chipColor}>
+                      {f.pctChange > 0 ? '+' : ''}{f.pctChange}%
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Current: <span className="text-white font-mono">{f.lastActual}</span>
+                    {' → Forecast: '}
+                    <span className="text-white font-mono">{f.lastForecast}</span>
+                  </p>
+                  <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 180 }}>
+                    {/* Confidence band */}
+                    <path d={ciBand} fill="rgba(167, 139, 250, 0.15)" stroke="none" />
+                    {/* Historical line */}
+                    <path d={histPath} fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
+                    {/* Predicted line (dashed) */}
+                    <path d={predPath} fill="none" stroke="#a78bfa" strokeWidth="1.5" strokeDasharray="4 3" />
+                    {/* Divider line at forecast boundary */}
+                    <line
+                      x1={PAD + (f.historical.length - 1) * xStep}
+                      y1={PAD}
+                      x2={PAD + (f.historical.length - 1) * xStep}
+                      y2={H - PAD}
+                      stroke="rgba(167, 139, 250, 0.3)"
+                      strokeDasharray="2 4"
+                    />
+                  </svg>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="px-6 py-3 border-t border-white/5 bg-violet-500/5">
+            <p className="text-xs text-gray-500 leading-relaxed">
+              <span className="text-violet-400">━━━</span> historical &nbsp;&nbsp;
+              <span className="text-violet-400">─ ─ ─</span> forecast &nbsp;&nbsp;
+              <span className="text-violet-400/40">▓</span> 95% confidence interval
+            </p>
           </div>
         </div>
       )}

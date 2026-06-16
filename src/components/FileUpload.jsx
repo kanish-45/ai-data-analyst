@@ -298,7 +298,12 @@ export default function FileUpload({ onNavigateToChat }) {
           if (savedDataset?.clusters) {
             dataset.clusters = savedDataset.clusters
           }
-          
+          if (savedDataset?.forecast) {
+            dataset.forecast = savedDataset.forecast
+          }
+          if (savedDataset?.pca) {
+            dataset.pca = savedDataset.pca
+          }
           setSavedToCloud(true)
         } catch (saveErr) {
           console.warn('Cloud save failed (dataset still available locally):', saveErr.message)

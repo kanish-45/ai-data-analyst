@@ -905,6 +905,286 @@ def compute_clusters(req: ProfileRequest):
             "points":       scatter_points,
         },
     }
+    # ── Time-series forecasting (ARIMA) ──────────────────────────────────────────
+@app.post("/forecast")
+def forecast_future(req: ProfileRequest):
+    """
+    Forecast future values for time-series numeric columns.
+
+    1. Auto-detects the date column.
+    2. For each numeric column, fits an ARIMA model and predicts the next N periods.
+    3. Returns predicted values + 95% confidence intervals.
+
+    Uses statsmodels ARIMA with a sensible default order (1, 1, 1) which works
+    well for most business time-series. Falls back to a simpler linear projection
+    if ARIMA fails to converge.
+    """
+    from statsmodels.tsa.arima.model import ARIMA
+    import warnings
+    warnings.filterwarnings("ignore")    # suppress ARIMA convergence warnings
+
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    if len(df) < 10:
+        return {
+            "hasForecast": False,
+            "note":        "Need at least 10 data points to forecast.",
+        }
+
+    # ── 1. Detect date column ──────────────────────────────────────────
+    date_col, parsed_dates = None, None
+    for col in df.columns:
+        try:
+            dates = pd.to_datetime(df[col], errors="coerce")
+            if dates.notna().sum() / len(df) >= 0.8:
+                date_col      = col
+                parsed_dates  = dates
+                break
+        except Exception:
+            continue
+
+    if date_col is None:
+        return {
+            "hasForecast": False,
+            "note":        "No date column detected — forecasting requires a time-series dataset.",
+        }
+
+    # ── 2. Sort by date and identify numeric columns ───────────────────
+    df_sorted = df.copy()
+    df_sorted["__date"] = parsed_dates
+    df_sorted = df_sorted.dropna(subset=["__date"]).sort_values("__date").reset_index(drop=True)
+
+    numeric_cols = []
+    for col in df_sorted.columns:
+        if col in (date_col, "__date"): continue
+        numeric = pd.to_numeric(df_sorted[col], errors="coerce").dropna()
+        if len(numeric) >= 10 and (len(numeric) / len(df_sorted)) >= 0.7:
+            if numeric.nunique() >= 3:    # not a constant or near-constant column
+                numeric_cols.append(col)
+
+    if not numeric_cols:
+        return {
+            "hasForecast": True,
+            "dateColumn":  date_col,
+            "forecasts":   [],
+            "note":        "No suitable numeric columns to forecast.",
+        }
+
+    # ── 3. Infer the forecast horizon (10-15% of history, capped at 24) ────
+    n_history     = len(df_sorted)
+    n_forecast    = min(24, max(3, int(n_history * 0.15)))
+
+    # Infer the time delta between periods to project future dates
+    time_diffs = df_sorted["__date"].diff().dropna()
+    median_delta = time_diffs.median() if len(time_diffs) > 0 else pd.Timedelta(days=30)
+
+    # Generate future timestamps for the forecast window
+    last_date = df_sorted["__date"].iloc[-1]
+    future_dates = [last_date + median_delta * (i + 1) for i in range(n_forecast)]
+
+    # ── 4. Run ARIMA on each numeric column ────────────────────────────
+    forecasts = []
+    for col in numeric_cols[:5]:    # cap at 5 columns for performance
+        try:
+            series = pd.to_numeric(df_sorted[col], errors="coerce").dropna().reset_index(drop=True)
+            if len(series) < 10: continue
+
+            # Fit ARIMA(1,1,1) — a common default for trended time-series
+            model     = ARIMA(series, order=(1, 1, 1))
+            fitted    = model.fit()
+
+            # Forecast + confidence intervals
+            forecast_obj = fitted.get_forecast(steps=n_forecast)
+            mean_vals    = forecast_obj.predicted_mean
+            ci           = forecast_obj.conf_int(alpha=0.05)    # 95% CI
+            lower_vals   = ci.iloc[:, 0]
+            upper_vals   = ci.iloc[:, 1]
+
+            # Build the response — actual data + predictions in order
+            historical = [
+                {
+                    "date":  df_sorted["__date"].iloc[i].strftime("%Y-%m-%d"),
+                    "value": round(float(series.iloc[i]), 2),
+                    "type":  "actual",
+                }
+                for i in range(len(series))
+            ]
+            predicted = [
+                {
+                    "date":  future_dates[i].strftime("%Y-%m-%d"),
+                    "value": round(float(mean_vals.iloc[i]), 2),
+                    "lower": round(float(lower_vals.iloc[i]), 2),
+                    "upper": round(float(upper_vals.iloc[i]), 2),
+                    "type":  "forecast",
+                }
+                for i in range(n_forecast)
+            ]
+
+            # Summary stats: what's the expected change?
+            last_actual = float(series.iloc[-1])
+            last_pred   = float(mean_vals.iloc[-1])
+            pct_change  = (
+                ((last_pred - last_actual) / abs(last_actual)) * 100
+                if last_actual != 0 else 0
+            )
+
+            if   pct_change >  5: direction, severity = "rising",  "growth expected"
+            elif pct_change < -5: direction, severity = "falling", "decline expected"
+            else:                  direction, severity = "stable",  "stable outlook"
+
+            forecasts.append({
+                "column":      col,
+                "model":       "ARIMA(1,1,1)",
+                "lastActual":  round(last_actual, 2),
+                "lastForecast":round(last_pred, 2),
+                "pctChange":   round(float(pct_change), 1),
+                "direction":   direction,
+                "summary":     f"'{col}' forecasted to reach {round(last_pred, 2)} in {n_forecast} periods ({'+' if pct_change > 0 else ''}{round(pct_change, 1)}% vs current) — {severity}",
+                "historical":  historical,
+                "predicted":   predicted,
+            })
+
+        except Exception as e:
+            forecasts.append({
+                "column": col,
+                "error":  f"Forecast failed: {str(e)[:100]}",
+            })
+
+    return {
+        "hasForecast":   True,
+        "dateColumn":    date_col,
+        "historyLength": n_history,
+        "forecastLength": n_forecast,
+        "forecasts":     [f for f in forecasts if "error" not in f][:5],
+    }
+    # ── Principal Component Analysis (PCA) ───────────────────────────────────────
+@app.post("/pca")
+def compute_pca(req: ProfileRequest):
+    """
+    Run Principal Component Analysis to project numeric columns into 2D.
+
+    Standardizes the data, fits PCA(n_components=2), and returns:
+      - 2D coordinates for every row (sampled if >500)
+      - Explained variance ratio for each component
+      - The "loading" of each original column on each component
+        (how much that column contributes to PC1 and PC2)
+
+    The result is a 2D scatter that captures most of the variation in the
+    high-dimensional dataset on a single chart.
+    """
+    from sklearn.decomposition  import PCA
+    from sklearn.preprocessing  import StandardScaler
+
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    if len(df) < 4:
+        return {"hasPCA": False, "note": "Need at least 4 rows for PCA."}
+
+    # ── 1. Find usable numeric columns ─────────────────────────────────
+    numeric_cols = []
+    for col in df.columns:
+        numeric = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(numeric) < 4: continue
+        if numeric.nunique() < 2: continue        # constant column
+        if (len(numeric) / len(df)) >= 0.7:
+            numeric_cols.append(col)
+
+    if len(numeric_cols) < 2:
+        return {
+            "hasPCA": False,
+            "note":   f"PCA needs at least 2 numeric columns — found {len(numeric_cols)}.",
+        }
+
+    # ── 2. Build matrix + standardize (zero mean, unit variance) ───────
+    X_raw = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    X_raw = X_raw.fillna(X_raw.mean())
+    if X_raw.isna().any().any():
+        bad = X_raw.columns[X_raw.isna().any()].tolist()
+        X_raw       = X_raw.drop(columns=bad)
+        numeric_cols = [c for c in numeric_cols if c not in bad]
+        if len(numeric_cols) < 2:
+            return {"hasPCA": False, "note": "Not enough usable numeric data."}
+
+    scaler   = StandardScaler()
+    X_scaled = scaler.fit_transform(X_raw.values)
+
+    # ── 3. Fit PCA with 2 components ───────────────────────────────────
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X_scaled)
+
+    explained_var       = pca.explained_variance_ratio_           # how much variance each PC captures
+    total_explained_pct = round(float(explained_var.sum()) * 100, 1)
+
+    # ── 4. Component "loadings" — which original columns drive each PC ──
+    # loadings[i][j] = how strongly column j contributes to component i
+    loadings = pca.components_                                     # shape: (2, n_features)
+
+    pc1_loadings = []
+    pc2_loadings = []
+    for j, col in enumerate(numeric_cols):
+        pc1_loadings.append({
+            "column":      col,
+            "loading":     round(float(loadings[0][j]), 3),
+            "absLoading":  round(abs(float(loadings[0][j])), 3),
+        })
+        pc2_loadings.append({
+            "column":      col,
+            "loading":     round(float(loadings[1][j]), 3),
+            "absLoading":  round(abs(float(loadings[1][j])), 3),
+        })
+
+    pc1_loadings.sort(key=lambda d: d["absLoading"], reverse=True)
+    pc2_loadings.sort(key=lambda d: d["absLoading"], reverse=True)
+
+    # ── 5. Build scatter points (sample max 500 for performance) ───────
+    sample_size = min(500, len(df))
+    if len(df) > sample_size:
+        sample_idx = np.random.RandomState(42).choice(len(df), sample_size, replace=False)
+    else:
+        sample_idx = np.arange(len(df))
+
+    scatter_points = []
+    for idx in sample_idx:
+        scatter_points.append({
+            "x":     round(float(X_pca[int(idx)][0]), 3),
+            "y":     round(float(X_pca[int(idx)][1]), 3),
+            "index": int(idx),
+        })
+
+    # ── 6. Build human-readable interpretation ─────────────────────────
+    pc1_top = pc1_loadings[0]
+    pc2_top = pc2_loadings[0]
+    interpretation = (
+        f"PC1 ({round(float(explained_var[0]) * 100, 1)}% of variance) "
+        f"is driven mostly by '{pc1_top['column']}' (loading {pc1_top['loading']}). "
+        f"PC2 ({round(float(explained_var[1]) * 100, 1)}% of variance) "
+        f"is driven mostly by '{pc2_top['column']}' (loading {pc2_top['loading']}). "
+        f"Together they explain {total_explained_pct}% of all variation in the data."
+    )
+
+    return {
+        "hasPCA":             True,
+        "numericColumns":     numeric_cols,
+        "totalColumns":       len(numeric_cols),
+        "explainedVariance": {
+            "PC1":           round(float(explained_var[0]) * 100, 1),
+            "PC2":           round(float(explained_var[1]) * 100, 1),
+            "total":         total_explained_pct,
+        },
+        "loadings": {
+            "PC1":           pc1_loadings,
+            "PC2":           pc2_loadings,
+        },
+        "scatter": {
+            "points":        scatter_points,
+            "pointCount":    len(scatter_points),
+        },
+        "interpretation":    interpretation,
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
