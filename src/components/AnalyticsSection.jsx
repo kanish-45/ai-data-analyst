@@ -193,6 +193,110 @@ export default function AnalyticsSection() {
           Statistical relationships between numeric columns in <span className="text-cyan-400">{activeDataset.name}</span>
         </p>
       </div>
+      {/* Duplicates card (only shows if duplicate analysis ran) */}
+      {activeDataset.duplicates?.hasDuplicates && (
+        <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5">
+            <div className={'w-10 h-10 rounded-xl flex items-center justify-center ' +
+              (activeDataset.duplicates.severity === 'warning' ? 'bg-rose-500/10' :
+               activeDataset.duplicates.severity === 'notable' ? 'bg-amber-500/10' :
+                                                                  'bg-emerald-500/10')}>
+              <Info size={18} className={
+                activeDataset.duplicates.severity === 'warning' ? 'text-rose-400' :
+                activeDataset.duplicates.severity === 'notable' ? 'text-amber-400' :
+                                                                   'text-emerald-400'} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-white font-bold">Duplicate detection</h2>
+              <p className="text-xs text-gray-500">
+                Exact + near-duplicate (≥80% column match) row detection · pandas
+              </p>
+            </div>
+          </div>
+
+          {/* Recommendation banner */}
+          <div className={'px-6 py-4 border-b border-white/5 ' +
+            (activeDataset.duplicates.severity === 'warning' ? 'bg-rose-500/5' :
+             activeDataset.duplicates.severity === 'notable' ? 'bg-amber-500/5' :
+                                                                'bg-emerald-500/5')}>
+            <p className={'text-sm font-medium ' +
+              (activeDataset.duplicates.severity === 'warning' ? 'text-rose-400' :
+               activeDataset.duplicates.severity === 'notable' ? 'text-amber-400' :
+                                                                  'text-emerald-400')}>
+              {activeDataset.duplicates.recommendation}
+            </p>
+          </div>
+
+          {/* Stats grid */}
+          <div className="grid grid-cols-3 divide-x divide-white/5">
+            <div className="px-6 py-4">
+              <p className="text-xs text-gray-500 mb-1">Total rows</p>
+              <p className="text-lg font-bold text-white tabular-nums">
+                {activeDataset.duplicates.totalRows.toLocaleString()}
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs text-gray-500 mb-1">Exact duplicates</p>
+              <p className="text-lg font-bold text-white tabular-nums">
+                {activeDataset.duplicates.exact?.count || 0}
+                <span className="text-xs text-gray-500 ml-2 font-normal">
+                  ({activeDataset.duplicates.exact?.percentage || 0}%)
+                </span>
+              </p>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs text-gray-500 mb-1">Near-duplicates</p>
+              <p className="text-lg font-bold text-white tabular-nums">
+                {activeDataset.duplicates.near?.count || 0}
+                <span className="text-xs text-gray-500 ml-2 font-normal">
+                  ({activeDataset.duplicates.near?.percentage || 0}%)
+                </span>
+              </p>
+            </div>
+          </div>
+
+          {/* Sample groups */}
+          {(activeDataset.duplicates.exact?.groups?.length > 0 || activeDataset.duplicates.near?.groups?.length > 0) && (
+            <div className="border-t border-white/5 px-6 py-4 space-y-3">
+              {activeDataset.duplicates.exact?.groups?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-rose-400 mb-2">Exact duplicate groups:</p>
+                  <div className="space-y-1.5">
+                    {activeDataset.duplicates.exact.groups.slice(0, 5).map((g, i) => (
+                      <div key={i} className="flex items-center gap-3 text-xs">
+                        <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 font-mono tabular-nums w-12 text-center flex-shrink-0">
+                          {g.count}×
+                        </span>
+                        <span className="text-gray-500 truncate">
+                          rows {g.rowIndices.slice(0, 5).join(', ')}{g.rowIndices.length > 5 ? '…' : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeDataset.duplicates.near?.groups?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-amber-400 mb-2">Near-duplicate groups (≥80% match):</p>
+                  <div className="space-y-1.5">
+                    {activeDataset.duplicates.near.groups.slice(0, 5).map((g, i) => (
+                      <div key={i} className="flex items-center gap-3 text-xs">
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 font-mono tabular-nums w-12 text-center flex-shrink-0">
+                          {g.count}×
+                        </span>
+                        <span className="text-gray-500 truncate">
+                          rows {g.rowIndices.slice(0, 5).join(', ')}{g.rowIndices.length > 5 ? '…' : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {/* Feature Importance card (only shows if importance was computed) */}
       {activeDataset.importance?.hasImportance && activeDataset.importance?.targets?.length > 0 && (
         <FeatureImportanceCard data={activeDataset.importance} />

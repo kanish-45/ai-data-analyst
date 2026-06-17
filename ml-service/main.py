@@ -1316,6 +1316,140 @@ def compute_feature_importance(req: ProfileRequest):
         "totalTargets":   len(targets),
         "targets":        targets,
     }
+    # ── Duplicate / near-duplicate detection ─────────────────────────────────────
+@app.post("/duplicates")
+def detect_duplicates(req: ProfileRequest):
+    """
+    Find duplicate and near-duplicate rows in the dataset.
+
+    Two checks:
+      1. Exact duplicates — rows where every cell value matches another row.
+      2. Near-duplicates  — rows where ≥80% of column values match another row,
+         catching typos, whitespace differences, and case variations.
+
+    Returns counts, groups of similar rows, sample row indices, and a
+    deduplication summary.
+    """
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+
+    df = pd.DataFrame(req.rows)
+    total_rows = len(df)
+    if total_rows < 2:
+        return {
+            "hasDuplicates":   False,
+            "note":            "Need at least 2 rows to check for duplicates.",
+        }
+
+    # ── 1. Exact duplicates ────────────────────────────────────────────
+    # Normalize string values (strip whitespace, lowercase) for a fair check
+    df_norm = df.copy()
+    for col in df_norm.columns:
+        if df_norm[col].dtype == "object":
+            df_norm[col] = df_norm[col].astype(str).str.strip().str.lower()
+
+    duplicate_mask    = df_norm.duplicated(keep=False)          # True for ALL members of dup groups
+    exact_dup_count   = int(duplicate_mask.sum())
+    exact_dup_pct     = round(exact_dup_count / total_rows * 100, 1)
+
+    # Group exact duplicates
+    exact_groups = []
+    if exact_dup_count > 0:
+        grouped = df_norm[duplicate_mask].groupby(df_norm.columns.tolist(), dropna=False)
+        for _, group_rows in grouped:
+            indices = group_rows.index.tolist()
+            if len(indices) > 1:
+                exact_groups.append({
+                    "rowIndices": [int(i) for i in indices[:10]],   # cap at 10 per group
+                    "count":      len(indices),
+                    "sampleRow":  {col: (str(df.iloc[indices[0]][col])[:60]) for col in df.columns[:6]},
+                })
+        # Sort by group size (biggest dup clusters first)
+        exact_groups.sort(key=lambda g: g["count"], reverse=True)
+        exact_groups = exact_groups[:10]    # top 10 groups only
+
+    # ── 2. Near-duplicates (≥80% column match) ─────────────────────────
+    # Only attempt this on reasonably sized datasets (O(n²) algorithm)
+    near_dup_count    = 0
+    near_dup_groups   = []
+    n_cols            = len(df.columns)
+    threshold_cols    = max(1, int(n_cols * 0.8))    # 80% of columns must match
+
+    if total_rows <= 1000 and n_cols >= 2 and exact_dup_count < total_rows * 0.5:
+        # Convert to comparable strings per row, exclude already-exact duplicates
+        non_exact     = df_norm[~duplicate_mask].copy()
+        row_signatures = non_exact.astype(str).agg("|".join, axis=1).tolist()
+        non_exact_idx  = non_exact.index.tolist()
+
+        # Find near-duplicate pairs
+        seen_pairs     = set()
+        near_clusters  = []
+        for i, sig_i in enumerate(row_signatures):
+            if i in seen_pairs: continue
+            matches = [non_exact_idx[i]]
+            tokens_i = sig_i.split("|")
+            for j in range(i + 1, len(row_signatures)):
+                if j in seen_pairs: continue
+                tokens_j = row_signatures[j].split("|")
+                matching = sum(1 for a, b in zip(tokens_i, tokens_j) if a == b)
+                if matching >= threshold_cols:
+                    matches.append(non_exact_idx[j])
+                    seen_pairs.add(j)
+            if len(matches) > 1:
+                near_clusters.append(matches)
+                seen_pairs.add(i)
+
+        # Build human-readable near-dup groups
+        for cluster in near_clusters[:10]:
+            near_dup_count += len(cluster)
+            near_dup_groups.append({
+                "rowIndices":   [int(x) for x in cluster[:10]],
+                "count":        len(cluster),
+                "matchPercent": 80,    # threshold used
+                "sampleRow":    {col: (str(df.iloc[cluster[0]][col])[:60]) for col in df.columns[:6]},
+            })
+
+    near_dup_pct = round(near_dup_count / total_rows * 100, 1) if total_rows > 0 else 0
+
+    # ── 3. Build the response ──────────────────────────────────────────
+    total_dup_rows = exact_dup_count + near_dup_count
+    total_dup_pct  = round(total_dup_rows / total_rows * 100, 1)
+
+    # Generate a recommendation
+    if total_dup_rows == 0:
+        recommendation = "No duplicate rows detected — your dataset is clean."
+        severity       = "info"
+    elif total_dup_pct < 2:
+        recommendation = f"{total_dup_rows} duplicate row(s) ({total_dup_pct}% of dataset). Low impact — consider reviewing but optional to remove."
+        severity       = "info"
+    elif total_dup_pct < 10:
+        recommendation = f"{total_dup_rows} duplicate row(s) ({total_dup_pct}% of dataset). Worth removing — they can bias averages and aggregations."
+        severity       = "notable"
+    else:
+        recommendation = f"{total_dup_rows} duplicate row(s) ({total_dup_pct}% of dataset). High duplication — strongly recommend deduplication before analysis."
+        severity       = "warning"
+
+    return {
+        "hasDuplicates":    True,
+        "totalRows":        total_rows,
+        "exact": {
+            "count":        exact_dup_count,
+            "percentage":   exact_dup_pct,
+            "groups":       exact_groups,
+            "groupCount":   len(exact_groups),
+        },
+        "near": {
+            "count":        near_dup_count,
+            "percentage":   near_dup_pct,
+            "groups":       near_dup_groups,
+            "groupCount":   len(near_dup_groups),
+            "checked":      total_rows <= 1000,
+        },
+        "totalDuplicates":  total_dup_rows,
+        "totalPercentage":  total_dup_pct,
+        "recommendation":   recommendation,
+        "severity":         severity,
+    }
 # ── Local dev entry point ────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

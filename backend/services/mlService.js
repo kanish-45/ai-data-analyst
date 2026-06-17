@@ -150,7 +150,7 @@ async function computeClusters(rows) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ rows }),
-    })
+    }, 60000)    // 60s — elbow method runs many fits
     if (!res.ok) {
       console.warn(`[mlService] /clusters returned ${res.status} ${res.statusText}`)
       return null
@@ -215,6 +215,24 @@ async function computeImportance(rows) {
     return null
   }
 }
+async function detectDuplicates(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  try {
+    const res = await fetchWithTimeout(`${ML_SERVICE_URL}/duplicates`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rows }),
+    })
+    if (!res.ok) {
+      console.warn(`[mlService] /duplicates returned ${res.status} ${res.statusText}`)
+      return null
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('[mlService] /duplicates failed:', err.message)
+    return null
+  }
+}
 
 module.exports = {
   ML_SERVICE_URL,
@@ -229,4 +247,5 @@ module.exports = {
   forecastFuture,
   computePCA,
   computeImportance,
+  detectDuplicates,
 }

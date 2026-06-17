@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const datasets = await Dataset
       .find({ user: req.user._id })
-      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters -forecast -pca -importance')
+      .select('-sampleRows -columnStats -anomalies -correlations -trends -clusters -forecast -pca -importance -duplicates')
       .sort({ createdAt: -1 })
       .limit(100)
     res.json({ datasets: datasets.map((d) => d.toSummary()) })
@@ -146,6 +146,19 @@ router.post('/', async (req, res) => {
       }
     }
 
+    let duplicates = null
+    if (Array.isArray(allRows) && allRows.length > 0) {
+      const result = await mlService.detectDuplicates(allRows)
+      if (result) {
+        duplicates = result
+        if (result.hasDuplicates) {
+          console.log(`[datasets] ✓ Duplicates: ${result.totalDuplicates} duplicate row(s) (${result.totalPercentage}% of dataset)`)
+        } else {
+          console.log(`[datasets] ✓ Duplicates: ${result.note || 'not applicable'}`)
+        }
+      }
+    }
+
     const storedSample = sampleRows && sampleRows.length > 0
       ? sampleRows
       : (Array.isArray(allRows) ? allRows.slice(0, 20) : [])
@@ -168,6 +181,7 @@ router.post('/', async (req, res) => {
       if (forecast)     existing.forecast     = forecast
       if (pca)          existing.pca          = pca
       if (importance)   existing.importance   = importance
+      if (duplicates)   existing.duplicates   = duplicates
       existing.tags        = tags        || [type.toUpperCase()]
       existing.status      = 'ready'
 
@@ -181,6 +195,7 @@ router.post('/', async (req, res) => {
       if (forecast)     existing.markModified('forecast')
       if (pca)          existing.markModified('pca')
       if (importance)   existing.markModified('importance')
+      if (duplicates)   existing.markModified('duplicates')
 
       await existing.save()
       return res.json({ dataset: existing.toFull(), updated: true })
@@ -205,6 +220,7 @@ router.post('/', async (req, res) => {
       forecast:     forecast     || {},
       pca:          pca          || {},
       importance:   importance   || {},
+      duplicates:   duplicates   || {},
       tags:         tags || [type.toUpperCase()],
       status:       'ready',
     })

@@ -25,6 +25,7 @@ const DatasetSchema = new mongoose.Schema(
     forecast:    { type: mongoose.Schema.Types.Mixed, default: {} },
     pca:         { type: mongoose.Schema.Types.Mixed, default: {} },
     importance:  { type: mongoose.Schema.Types.Mixed, default: {} },
+    duplicates:  { type: mongoose.Schema.Types.Mixed, default: {} },
     tags:        { type: [String], default: [] },
     status:      { type: String, enum: ['ready', 'error'], default: 'ready' },
   },
@@ -64,6 +65,7 @@ DatasetSchema.methods.toFull = function () {
     forecast:     this.forecast,
     pca:          this.pca,
     importance:   this.importance,
+    duplicates:   this.duplicates,
   }
 }
 

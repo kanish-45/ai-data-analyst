@@ -307,6 +307,9 @@ export default function FileUpload({ onNavigateToChat }) {
           if (savedDataset?.importance) {
             dataset.importance = savedDataset.importance
           }
+          if (savedDataset?.duplicates) {
+            dataset.duplicates = savedDataset.duplicates
+          }
           setSavedToCloud(true)
         } catch (saveErr) {
           console.warn('Cloud save failed (dataset still available locally):', saveErr.message)

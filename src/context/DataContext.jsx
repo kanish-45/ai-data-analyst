@@ -345,6 +345,18 @@ export function buildDatasetContext(dataset) {
       `\nFeature importance (Random Forest Regressor, scikit-learn):\n` +
       lines.join('\n')
   }
+  // ── Duplicates section ─────────────────────────────────────────────────
+  const duplicatesData = dataset.duplicates || {}
+  const hasDups = duplicatesData.hasDuplicates && duplicatesData.totalDuplicates !== undefined
+
+  let duplicatesBlock = ''
+  if (hasDups) {
+    duplicatesBlock =
+      `\nDuplicate row detection (pandas):\n` +
+      `  Exact duplicates: ${duplicatesData.exact?.count || 0} rows (${duplicatesData.exact?.percentage || 0}%)\n` +
+      `  Near-duplicates (≥80% match): ${duplicatesData.near?.count || 0} rows (${duplicatesData.near?.percentage || 0}%)\n` +
+      `  Total: ${duplicatesData.totalDuplicates} rows (${duplicatesData.totalPercentage}%) — ${duplicatesData.recommendation}`
+  }
 
   const sampleRows = (dataset.rows || [])
     .slice(0, 5)
